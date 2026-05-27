@@ -821,6 +821,19 @@ dialog::backdrop {
     grid-template-columns: 1fr 1fr;
   }
 
+  .headline-card {
+    padding: 14px;
+  }
+
+  .headline-card strong {
+    font-size: 28px;
+  }
+
+  #projectDeadline {
+    font-size: 24px;
+    white-space: nowrap;
+  }
+
   .brief-grid,
   .public-metrics,
   .public-brief,
