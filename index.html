@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Desk</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="accessGate" class="access-gate">
+      <section id="loadingCard" class="access-card">
+        <p class="eyebrow">Project Desk</p>
+        <h1>正在加载工作区</h1>
+      </section>
+
+      <section id="setupCard" class="access-card" hidden>
+        <p class="eyebrow">首次配置</p>
+        <h1>连接云端数据</h1>
+        <p>要在不同电脑使用同一份数据，需要先配置 Supabase 项目。按 README 完成配置后重新打开此页面。</p>
+        <div class="setup-actions">
+          <button class="ghost-button" id="localPreviewButton">先在本机预览</button>
+        </div>
+      </section>
+
+      <section id="authCard" class="access-card auth-card" hidden>
+        <p class="eyebrow">Project Desk</p>
+        <h1>登录项目工作台</h1>
+        <p>项目、任务和日报保存在云端；在其他电脑使用同一账号登录即可访问。</p>
+        <form id="loginForm" class="auth-form">
+          <label>邮箱 <input id="loginEmail" type="email" autocomplete="email" required /></label>
+          <label>密码 <input id="loginPassword" type="password" autocomplete="current-password" minlength="6" required /></label>
+          <button class="primary-button" type="submit">登录</button>
+        </form>
+        <div class="auth-divider">没有账号</div>
+        <form id="signupForm" class="auth-form compact">
+          <label>邮箱 <input id="signupEmail" type="email" autocomplete="email" required /></label>
+          <label>密码 <input id="signupPassword" type="password" autocomplete="new-password" minlength="6" required /></label>
+          <button class="ghost-button" type="submit">注册</button>
+        </form>
+        <p id="authMessage" class="form-message" role="status"></p>
+      </section>
+    </main>
+
+    <div id="appPage" class="page" hidden>
+      <header class="topbar">
+        <div class="topbar-title">
+          <p class="eyebrow">Project Desk</p>
+          <h1 id="projectName">项目工作台</h1>
+          <p class="topbar-subtitle" id="projectSummary">一句话总结</p>
+        </div>
+        <div class="topbar-actions">
+          <div class="session-info">
+            <span id="syncStatus" class="sync-status">未同步</span>
+            <span id="accountLabel" class="account-label"></span>
+          </div>
+          <label class="toolbar-field project-picker">
+            当前项目
+            <select id="projectSelect"></select>
+          </label>
+          <button class="ghost-button" id="openProjectModal">项目设置</button>
+          <button class="ghost-button" id="createProjectButton">新增项目</button>
+          <button class="primary-button" id="openTaskModal">新增任务</button>
+          <button class="primary-button alt" id="openDailyModal">新增日报</button>
+          <button class="ghost-button" id="logoutButton">退出</button>
+        </div>
+      </header>
+
+      <section class="headline-grid">
+        <article class="headline-card deadline-card">
+          <span>项目截止日</span>
+          <strong id="projectDeadline">-</strong>
+          <p id="deadlineCountdown">距离 deadline 还剩 - 天</p>
+        </article>
+        <article class="headline-card">
+          <span>项目实际进度</span>
+          <strong id="overallProgress">0%</strong>
+          <p>按任务实际完成百分比平均</p>
+        </article>
+        <article class="headline-card">
+          <span>计划应达进度</span>
+          <strong id="plannedProgress">0%</strong>
+          <p>按任务维护的计划进度平均</p>
+        </article>
+        <article class="headline-card">
+          <span>逾期任务</span>
+          <strong id="overdueCount">0</strong>
+          <p>结束日期已过且未关闭</p>
+        </article>
+      </section>
+
+      <section class="brief-grid">
+        <article class="panel brief-card">
+          <div class="panel-header"><h2>一句话总结</h2></div>
+          <p id="publicSummary" class="brief-text"></p>
+        </article>
+        <article class="panel brief-card">
+          <div class="panel-header"><h2>TOP 风险</h2></div>
+          <p id="projectTopRisk" class="brief-text"></p>
+        </article>
+        <article class="panel brief-card">
+          <div class="panel-header"><h2>下一步计划</h2></div>
+          <p id="projectNextStep" class="brief-text"></p>
+        </article>
+      </section>
+
+      <section class="workspace-grid">
+        <section class="panel panel-main">
+          <div class="panel-header">
+            <div>
+              <h2>任务台账</h2>
+              <p>支持父子任务、编辑、日报回写进度。</p>
+            </div>
+            <div class="toolbar">
+              <label class="toolbar-field">
+                负责人
+                <select id="ownerFilter"></select>
+              </label>
+              <label class="toolbar-field">
+                状态
+                <select id="statusFilter">
+                  <option value="全部">全部</option>
+                  <option value="Open">Open</option>
+                  <option value="Ongoing">Ongoing</option>
+                  <option value="Closed">Closed</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>风险</th>
+                  <th>任务</th>
+                  <th>负责人</th>
+                  <th>开始</th>
+                  <th>工期</th>
+                  <th>结束</th>
+                  <th>状态</th>
+                  <th>计划%</th>
+                  <th>实际%</th>
+                  <th>实际完成日</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="taskTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="panel panel-side">
+          <div class="panel-header">
+            <div>
+              <h2>甘特图</h2>
+              <p>点击日期查看当天计划与实际。</p>
+            </div>
+            <div class="selected-date-badge" id="selectedDateBadge">当前查看：-</div>
+          </div>
+          <div class="gantt-shell">
+            <div id="ganttHeader" class="gantt-header"></div>
+            <div id="ganttRows" class="gantt-rows"></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>日期详情</h2>
+            <p>按甘特图日期查看计划、实际、延期原因和任务进度回写结果。</p>
+          </div>
+        </div>
+        <div class="date-detail-grid">
+          <div class="summary-stack" id="dailySummary"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>负责人</th>
+                  <th>计划完成</th>
+                  <th>实际完成</th>
+                  <th>关联任务</th>
+                  <th>回写进度%</th>
+                  <th>结果</th>
+                  <th>延期原因</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="dailyTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <dialog id="projectModal">
+      <form class="modal-form" id="projectForm">
+        <input id="projectIdInput" type="hidden" />
+        <div class="modal-head">
+          <h3 id="projectModalTitle">项目设置</h3>
+          <button type="button" class="icon-button" data-close="projectModal" aria-label="关闭">×</button>
+        </div>
+        <label>项目名称 <input id="projectNameInput" maxlength="80" required /></label>
+        <div class="form-grid two">
+          <label>截止日 <input id="projectDeadlineInput" type="date" required /></label>
+          <label>一句话总结 <input id="projectSummaryInput" maxlength="120" required /></label>
+        </div>
+        <label>TOP 风险 <textarea id="projectTopRiskInput" maxlength="200" required></textarea></label>
+        <label>下一步计划 <textarea id="projectNextStepInput" maxlength="200" required></textarea></label>
+        <div class="form-actions">
+          <button type="button" class="ghost-button" data-close="projectModal">取消</button>
+          <button class="primary-button" type="submit">保存项目</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="taskModal">
+      <form class="modal-form" id="taskForm">
+        <input id="taskIdInput" type="hidden" />
+        <div class="modal-head">
+          <h3 id="taskModalTitle">新增任务</h3>
+          <button type="button" class="icon-button" data-close="taskModal" aria-label="关闭">×</button>
+        </div>
+        <div class="form-grid two">
+          <label>父任务 <select id="taskParent"></select></label>
+          <label>风险等级
+            <select id="taskRisk">
+              <option value="H">H</option>
+              <option value="M">M</option>
+              <option value="L">L</option>
+            </select>
+          </label>
+        </div>
+        <label>任务名称 <input id="taskTitle" maxlength="80" required /></label>
+        <div class="form-grid three">
+          <label>负责人 <input id="taskOwner" maxlength="24" list="ownerSuggestions" required /></label>
+          <label>开始日期 <input id="taskStart" type="date" required /></label>
+          <label>工期(天) <input id="taskDuration" type="number" min="1" max="240" required /></label>
+        </div>
+        <div class="form-grid three">
+          <label>状态
+            <select id="taskStatus">
+              <option value="Open">Open</option>
+              <option value="Ongoing">Ongoing</option>
+              <option value="Closed">Closed</option>
+            </select>
+          </label>
+          <label>计划进度% <input id="taskPlannedProgress" type="number" min="0" max="100" required /></label>
+          <label>实际进度% <input id="taskProgress" type="number" min="0" max="100" required /></label>
+        </div>
+        <label>实际完成日 <input id="taskCompletedDate" type="date" /></label>
+        <label>备注 <textarea id="taskNote" maxlength="200"></textarea></label>
+        <div class="form-actions">
+          <button type="button" class="ghost-button" data-close="taskModal">取消</button>
+          <button class="primary-button" type="submit">保存任务</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dailyModal">
+      <form class="modal-form" id="dailyForm">
+        <input id="dailyIdInput" type="hidden" />
+        <div class="modal-head">
+          <h3 id="dailyModalTitle">新增日报</h3>
+          <button type="button" class="icon-button" data-close="dailyModal" aria-label="关闭">×</button>
+        </div>
+        <div class="form-grid two">
+          <label>日期 <input id="dailyDate" type="date" required /></label>
+          <label>负责人 <select id="dailyOwner"></select></label>
+        </div>
+        <label>关联任务 <select id="dailyTask"></select></label>
+        <label>计划完成 <input id="dailyPlanText" maxlength="80" required /></label>
+        <label>实际完成 <input id="dailyActualText" maxlength="120" required /></label>
+        <div class="form-grid two">
+          <label>回写任务进度% <input id="dailyProgressAfter" type="number" min="0" max="100" required /></label>
+          <label>结果
+            <select id="dailyResult">
+              <option value="完成">完成</option>
+              <option value="部分完成">部分完成</option>
+              <option value="延期">延期</option>
+            </select>
+          </label>
+        </div>
+        <label>延期原因 <textarea id="dailyDelayReason" maxlength="160" placeholder="如果延期，请写明原因。"></textarea></label>
+        <div class="form-actions">
+          <button type="button" class="ghost-button" data-close="dailyModal">取消</button>
+          <button class="primary-button alt" type="submit">保存日报</button>
+        </div>
+      </form>
+    </dialog>
+
+    <datalist id="ownerSuggestions"></datalist>
+    <script src="config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script defer src="app.js"></script>
+  </body>
+</html>
