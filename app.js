@@ -1,366 +1,165 @@
-const CLOUD_TABLE = "project_workspaces";
-const LOCAL_PREVIEW_KEY = "project-desk-local-v4";
-const LEGACY_LOCAL_KEY = "project-desk-v3";
+const LOCAL_PREVIEW_KEY = "project-desk-local-v5";
+const LEGACY_LOCAL_KEYS = ["project-desk-local-v4", "project-desk-v3"];
+const TABLES = {
+  projects: "projects",
+  tasks: "tasks",
+  progress: "task_progress_entries",
+  logs: "daily_logs",
+  legacy: "project_workspaces"
+};
 
 const defaultState = {
-  selectedProjectId: 1,
+  selectedProjectId: null,
   selectedDate: "2026-05-27",
   projects: [
     {
-      id: 1,
+      id: "sample-project-1",
       name: "官网改版上线",
       deadline: "2026-06-12",
       summary: "官网改版进入联调阶段，当前重点是按期上线并控制发布风险。",
       topRisk: "接口字段与前端展示仍有两处不一致，若本周未冻结会影响联调周期。",
       nextStep: "冻结接口字段，完成联调测试并确认灰度发布预案。",
+      isPublic: false,
+      publicSlug: "",
       tasks: [
         {
-          id: 101,
+          id: "sample-task-1",
           parentId: null,
           risk: "L",
           title: "项目启动与范围确认",
-          owner: "张三",
+          responsible: "张三",
           startDate: "2026-05-25",
           duration: 2,
           status: "Closed",
-          plannedProgress: 100,
-          actualProgress: 100,
           completedDate: "2026-05-26",
-          note: "启动会纪要和分工已经同步。"
+          note: "启动会纪要和分工已经同步。",
+          progressEntries: [{ entryDate: "2026-05-26", plannedProgress: 100, actualProgress: 100 }]
         },
         {
-          id: 102,
+          id: "sample-task-2",
           parentId: null,
           risk: "M",
           title: "需求冻结",
-          owner: "李四",
+          responsible: "李四",
           startDate: "2026-05-27",
           duration: 4,
           status: "Ongoing",
-          plannedProgress: 35,
-          actualProgress: 25,
           completedDate: "",
-          note: "还剩接口字段确认。"
+          note: "还剩接口字段确认。",
+          progressEntries: [{ entryDate: "2026-05-27", plannedProgress: 35, actualProgress: 25 }]
         },
         {
-          id: 103,
-          parentId: 102,
-          risk: "M",
-          title: "页面字段核对",
-          owner: "李四",
-          startDate: "2026-05-27",
-          duration: 2,
-          status: "Ongoing",
-          plannedProgress: 50,
-          actualProgress: 40,
-          completedDate: "",
-          note: "首页和报价页需要复核。"
-        },
-        {
-          id: 104,
-          parentId: 102,
+          id: "sample-task-3",
+          parentId: "sample-task-2",
           risk: "H",
           title: "接口字段签字确认",
-          owner: "王五",
+          responsible: "王五",
           startDate: "2026-05-28",
           duration: 2,
           status: "Open",
-          plannedProgress: 0,
-          actualProgress: 0,
           completedDate: "",
-          note: "产品和后端都要确认。"
-        },
-        {
-          id: 105,
-          parentId: null,
-          risk: "H",
-          title: "联调与冒烟测试",
-          owner: "赵六",
-          startDate: "2026-06-01",
-          duration: 5,
-          status: "Open",
-          plannedProgress: 0,
-          actualProgress: 0,
-          completedDate: "",
-          note: "依赖需求冻结完成。"
+          note: "产品和后端都要确认。",
+          progressEntries: [{ entryDate: "2026-05-27", plannedProgress: 0, actualProgress: 0 }]
         }
       ],
       dailyLogs: [
         {
-          id: 1001,
+          id: "sample-log-1",
           date: "2026-05-27",
-          owner: "李四",
-          taskId: 102,
+          responsible: "李四",
+          taskId: "sample-task-2",
           planText: "完成需求清单主要字段核对",
           actualText: "完成页面字段第一轮比对",
-          progressAfter: 25,
-          result: "部分完成",
-          delayReason: ""
-        },
-        {
-          id: 1002,
-          date: "2026-05-27",
-          owner: "李四",
-          taskId: 103,
-          planText: "核对首页和报价页字段",
-          actualText: "首页完成，报价页待确认",
-          progressAfter: 40,
+          plannedProgress: 35,
+          actualProgress: 25,
           result: "部分完成",
           delayReason: ""
         }
       ]
-    },
-    {
-      id: 2,
-      name: "客户培训项目",
-      deadline: "2026-06-18",
-      summary: "客户培训正在准备课程和材料，关键是尽快锁定参训名单。",
-      topRisk: "参训名单尚未确认，可能导致教材和排课返工。",
-      nextStep: "确认参训名单，完成教材初稿并准备演示环境。",
-      tasks: [
-        {
-          id: 201,
-          parentId: null,
-          risk: "L",
-          title: "培训范围确认",
-          owner: "周一",
-          startDate: "2026-05-27",
-          duration: 3,
-          status: "Ongoing",
-          plannedProgress: 30,
-          actualProgress: 20,
-          completedDate: "",
-          note: "课程清单正在细化。"
-        },
-        {
-          id: 202,
-          parentId: null,
-          risk: "M",
-          title: "教材准备",
-          owner: "吴二",
-          startDate: "2026-06-01",
-          duration: 6,
-          status: "Open",
-          plannedProgress: 0,
-          actualProgress: 0,
-          completedDate: "",
-          note: "依赖范围确认。"
-        }
-      ],
-      dailyLogs: []
     }
   ]
 };
 
-let appMode = "boot";
 let state = structuredClone(defaultState);
+let appMode = "boot";
 let cloudClient = null;
 let session = null;
-let saveTimer = null;
-let saveQueue = Promise.resolve();
+let recoveryMode = false;
 
-function cloneDefaultState() {
+function config() {
+  return window.PROJECT_DESK_CONFIG || {};
+}
+
+function hasCloudConfig() {
+  return Boolean(config().supabaseUrl && config().supabaseAnonKey);
+}
+
+function siteUrl() {
+  if (config().siteUrl) return config().siteUrl;
+  return `${window.location.origin}${window.location.pathname}`;
+}
+
+function cloneDefaults() {
   return structuredClone(defaultState);
 }
 
-function configuredForCloud() {
-  const config = window.PROJECT_DESK_CONFIG || {};
-  return Boolean(config.supabaseUrl && config.supabaseAnonKey);
-}
-
-function showOnlyCard(cardId) {
+function showGate(cardId) {
   ["loadingCard", "setupCard", "authCard"].forEach((id) => {
     document.getElementById(id).hidden = id !== cardId;
   });
   document.getElementById("accessGate").hidden = false;
   document.getElementById("appPage").hidden = true;
+  document.getElementById("publicPage").hidden = true;
 }
 
-function showApplication() {
+function showApp() {
   document.getElementById("accessGate").hidden = true;
+  document.getElementById("publicPage").hidden = true;
   document.getElementById("appPage").hidden = false;
   render();
 }
 
-function setAuthMessage(message, isError = false) {
+function showPublicPage() {
+  document.getElementById("accessGate").hidden = true;
+  document.getElementById("appPage").hidden = true;
+  document.getElementById("publicPage").hidden = false;
+}
+
+function setAuthMessage(message, error = false) {
   const element = document.getElementById("authMessage");
   element.textContent = message || "";
-  element.classList.toggle("error", isError);
+  element.classList.toggle("error", error);
 }
 
-function setSyncStatus(message, stateName = "") {
+function setSyncStatus(message, status = "") {
   const element = document.getElementById("syncStatus");
   element.textContent = message;
-  element.dataset.state = stateName;
+  element.dataset.state = status;
 }
 
-function loadLocalPreviewState() {
-  for (const key of [LOCAL_PREVIEW_KEY, LEGACY_LOCAL_KEY]) {
-    try {
-      const saved = localStorage.getItem(key);
-      if (!saved) continue;
-      const parsed = JSON.parse(saved);
-      if (parsed.projects?.length) return parsed;
-    } catch {
-      continue;
-    }
-  }
-  return cloneDefaultState();
-}
-
-async function initialize() {
-  bindEvents();
-  if (!configuredForCloud() || !window.supabase?.createClient) {
-    showOnlyCard("setupCard");
-    return;
-  }
-
-  const config = window.PROJECT_DESK_CONFIG;
-  cloudClient = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
-  cloudClient.auth.onAuthStateChange((_event, currentSession) => {
-    if (!currentSession) {
-      session = null;
-      appMode = "auth";
-      showOnlyCard("authCard");
-    }
-  });
-
-  const { data, error } = await cloudClient.auth.getSession();
-  if (error) {
-    showOnlyCard("authCard");
-    setAuthMessage(error.message, true);
-    return;
-  }
-  if (data.session) {
-    await openCloudWorkspace(data.session);
-  } else {
-    showOnlyCard("authCard");
-  }
-}
-
-async function openCloudWorkspace(currentSession) {
-  session = currentSession;
-  appMode = "cloud";
-  setAuthMessage("");
-  try {
-    const { data, error } = await cloudClient
-      .from(CLOUD_TABLE)
-      .select("payload")
-      .eq("user_id", session.user.id)
-      .maybeSingle();
-    if (error) throw error;
-    if (data?.payload?.projects?.length) {
-      state = data.payload;
-    } else {
-      state = loadLocalPreviewState();
-      await saveCloudState();
-    }
-    document.getElementById("accountLabel").textContent = session.user.email || "";
-    setSyncStatus("云端已同步", "saved");
-    showApplication();
-  } catch (error) {
-    appMode = "auth";
-    showOnlyCard("authCard");
-    setAuthMessage(`无法读取云端工作区：${error.message}。请先执行数据库建表脚本。`, true);
-  }
-}
-
-function startLocalPreview() {
-  appMode = "local";
-  state = loadLocalPreviewState();
-  document.getElementById("accountLabel").textContent = "本机预览";
-  document.getElementById("logoutButton").textContent = "返回登录";
-  setSyncStatus("仅保存在本机", "local");
-  showApplication();
-}
-
-function persistState() {
-  if (appMode === "local") {
-    localStorage.setItem(LOCAL_PREVIEW_KEY, JSON.stringify(state));
-    setSyncStatus("仅保存在本机", "local");
-    return;
-  }
-  if (appMode !== "cloud") return;
-  setSyncStatus("保存中...", "saving");
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveQueue = saveQueue.catch(() => undefined).then(saveCloudState).catch(() => undefined);
-  }, 100);
-}
-
-async function saveCloudState() {
-  if (!session || !cloudClient) return;
-  const payload = structuredClone(state);
-  const { error } = await cloudClient
-    .from(CLOUD_TABLE)
-    .upsert({
-      user_id: session.user.id,
-      payload,
-      updated_at: new Date().toISOString()
-    });
-  if (error) {
-    setSyncStatus("保存失败", "error");
-    throw error;
-  }
-  setSyncStatus("云端已同步", "saved");
-}
-
-async function signIn(email, password) {
-  setAuthMessage("正在登录...");
-  const { data, error } = await cloudClient.auth.signInWithPassword({ email, password });
-  if (error) {
-    setAuthMessage(error.message, true);
-    return;
-  }
-  await openCloudWorkspace(data.session);
-}
-
-async function signUp(email, password) {
-  setAuthMessage("正在注册...");
-  const { data, error } = await cloudClient.auth.signUp({ email, password });
-  if (error) {
-    setAuthMessage(error.message, true);
-    return;
-  }
-  if (data.session) {
-    await openCloudWorkspace(data.session);
-  } else {
-    setAuthMessage("注册成功。请先在邮箱中完成验证，然后登录。");
-  }
-}
-
-function currentProject() {
-  return state.projects.find((project) => project.id === state.selectedProjectId) || state.projects[0];
-}
-
-function parseDateString(value) {
+function parseDate(value) {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day);
 }
 
-function toDateString(date) {
-  const year = date.getFullYear();
+function dateString(date = new Date()) {
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 
-function addDays(value, days) {
-  const date = parseDateString(value);
-  date.setDate(date.getDate() + days);
-  return toDateString(date);
-}
-
-function endDateOf(task) {
-  return addDays(task.startDate, task.duration - 1);
-}
-
-function todayString() {
-  return toDateString(new Date());
+function addDays(value, count) {
+  const date = parseDate(value);
+  date.setDate(date.getDate() + count);
+  return dateString(date);
 }
 
 function daysBetween(start, end) {
-  return Math.round((parseDateString(end).getTime() - parseDateString(start).getTime()) / 86400000);
+  return Math.round((parseDate(end).getTime() - parseDate(start).getTime()) / 86400000);
+}
+
+function taskEndDate(task) {
+  return addDays(task.startDate, task.duration - 1);
 }
 
 function average(values) {
@@ -368,7 +167,7 @@ function average(values) {
 }
 
 function escapeHtml(value) {
-  return String(value)
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -376,46 +175,431 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function currentProject() {
+  return state.projects.find((project) => String(project.id) === String(state.selectedProjectId)) || state.projects[0];
+}
+
+function latestProgress(task, onDate = null) {
+  const entries = [...(task.progressEntries || [])]
+    .filter((entry) => !onDate || entry.entryDate <= onDate)
+    .sort((a, b) => a.entryDate.localeCompare(b.entryDate));
+  return entries.at(-1) || { plannedProgress: 0, actualProgress: 0 };
+}
+
 function orderedTasks(tasks) {
-  const map = new Map(tasks.map((task) => [task.id, { ...task, children: [] }]));
+  const map = new Map(tasks.map((task) => [String(task.id), { ...task, children: [] }]));
   const roots = [];
-  for (const task of map.values()) {
-    if (task.parentId && map.has(task.parentId)) {
-      map.get(task.parentId).children.push(task);
-    } else {
-      roots.push(task);
-    }
-  }
-  const rows = [];
-  function walk(task, depth) {
-    rows.push({ ...task, depth });
-    task.children
-      .sort((a, b) => a.startDate.localeCompare(b.startDate))
-      .forEach((child) => walk(child, depth + 1));
-  }
+  map.forEach((task) => {
+    if (task.parentId && map.has(String(task.parentId))) map.get(String(task.parentId)).children.push(task);
+    else roots.push(task);
+  });
+  const output = [];
+  const walk = (task, depth) => {
+    output.push({ ...task, depth });
+    task.children.sort((a, b) => a.startDate.localeCompare(b.startDate)).forEach((child) => walk(child, depth + 1));
+  };
   roots.sort((a, b) => a.startDate.localeCompare(b.startDate)).forEach((task) => walk(task, 0));
-  return rows;
+  return output;
+}
+
+function ownersOf(project) {
+  return [...new Set(project.tasks.map((task) => task.responsible))].sort();
 }
 
 function riskClass(risk) {
   return { H: "risk-h", M: "risk-m", L: "risk-l" }[risk] || "risk-l";
 }
 
-function ownersOf(project) {
-  return [...new Set(project.tasks.map((task) => task.owner))].sort();
+function slugFor(name) {
+  const ascii = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `${ascii || "project"}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function loadLocalState() {
+  const keys = [LOCAL_PREVIEW_KEY, ...LEGACY_LOCAL_KEYS];
+  for (const key of keys) {
+    try {
+      const saved = localStorage.getItem(key);
+      if (!saved) continue;
+      const payload = normalizeLegacyPayload(JSON.parse(saved));
+      if (payload.projects.length) return payload;
+    } catch {
+      continue;
+    }
+  }
+  return cloneDefaults();
+}
+
+function normalizeLegacyPayload(payload) {
+  if (!payload?.projects?.length) return cloneDefaults();
+  const projects = payload.projects.map((project) => ({
+    id: project.id,
+    name: project.name,
+    deadline: project.deadline,
+    summary: project.summary || "",
+    topRisk: project.topRisk || "",
+    nextStep: project.nextStep || "",
+    isPublic: project.isPublic || false,
+    publicSlug: project.publicSlug || "",
+    tasks: (project.tasks || []).map((task) => ({
+      id: task.id,
+      parentId: task.parentId || null,
+      risk: task.risk || "M",
+      title: task.title,
+      responsible: task.responsible || task.owner || "",
+      startDate: task.startDate,
+      duration: Number(task.duration) || 1,
+      status: task.status || "Open",
+      completedDate: task.completedDate || "",
+      note: task.note || "",
+      progressEntries: task.progressEntries || [{
+        entryDate: payload.selectedDate || dateString(),
+        plannedProgress: Number(task.plannedProgress || 0),
+        actualProgress: Number(task.actualProgress || 0)
+      }]
+    })),
+    dailyLogs: (project.dailyLogs || []).map((log) => ({
+      id: log.id,
+      date: log.date,
+      responsible: log.responsible || log.owner || "",
+      taskId: log.taskId,
+      planText: log.planText || "",
+      actualText: log.actualText || "",
+      plannedProgress: Number(log.plannedProgress ?? 0),
+      actualProgress: Number(log.actualProgress ?? log.progressAfter ?? 0),
+      result: log.result,
+      delayReason: log.delayReason || ""
+    }))
+  }));
+  return {
+    selectedProjectId: payload.selectedProjectId || projects[0].id,
+    selectedDate: payload.selectedDate || dateString(),
+    projects
+  };
+}
+
+async function initialize() {
+  bindEvents();
+  if (!hasCloudConfig() || !window.supabase?.createClient) {
+    showGate("setupCard");
+    return;
+  }
+  cloudClient = window.supabase.createClient(config().supabaseUrl, config().supabaseAnonKey);
+
+  const shareSlug = new URLSearchParams(location.search).get("share");
+  if (shareSlug) {
+    await loadPublicProject(shareSlug);
+    return;
+  }
+
+  cloudClient.auth.onAuthStateChange((event, currentSession) => {
+    if (event === "PASSWORD_RECOVERY") {
+      recoveryMode = true;
+      document.getElementById("newPasswordModal").showModal();
+    }
+    if (!currentSession && appMode === "cloud") {
+      session = null;
+      showGate("authCard");
+    }
+  });
+
+  const { data, error } = await cloudClient.auth.getSession();
+  if (error) {
+    showGate("authCard");
+    setAuthMessage(error.message, true);
+  } else if (data.session) {
+    await openCloudWorkspace(data.session);
+  } else {
+    showGate("authCard");
+  }
+}
+
+async function loadPublicProject(slug) {
+  try {
+    const { data, error } = await cloudClient.rpc("get_public_project_snapshot", { p_slug: slug });
+    if (error) throw error;
+    if (!data) throw new Error("该项目未公开或链接无效。");
+    document.getElementById("publicProjectName").textContent = data.name;
+    document.getElementById("publicProjectSummary").textContent = data.summary;
+    document.getElementById("publicDeadline").textContent = data.deadline;
+    const days = daysBetween(dateString(), data.deadline);
+    document.getElementById("publicRemaining").textContent = days >= 0 ? `剩余 ${days} 天` : `逾期 ${Math.abs(days)} 天`;
+    document.getElementById("publicActual").textContent = `${data.actualProgress}%`;
+    document.getElementById("publicPlanned").textContent = `${data.plannedProgress}%`;
+    document.getElementById("publicClosed").textContent = `${data.closedTasks}/${data.taskCount}`;
+    document.getElementById("publicRisk").textContent = data.topRisk;
+    document.getElementById("publicNext").textContent = data.nextStep;
+    document.getElementById("publicTaskList").innerHTML = data.tasks.map((task) => `
+      <article class="public-task-row">
+        <strong>${escapeHtml(task.title)}</strong>
+        <span>${escapeHtml(task.status)}</span>
+        <span>${task.actualProgress}%</span>
+      </article>
+    `).join("") || '<p class="empty-state">暂无公开任务。</p>';
+    showPublicPage();
+  } catch (error) {
+    showGate("authCard");
+    setAuthMessage(`无法打开公开项目：${error.message}`, true);
+  }
+}
+
+async function openCloudWorkspace(currentSession) {
+  session = currentSession;
+  appMode = "cloud";
+  document.getElementById("accountLabel").textContent = session.user.email || "";
+  try {
+    await loadCloudState();
+    setSyncStatus("云端已同步", "saved");
+    showApp();
+  } catch (error) {
+    if (error.code === "PGRST205" || String(error.message).includes("Could not find the table") || String(error.message).includes("public.projects")) {
+      await openLegacyCloudWorkspace();
+      return;
+    }
+    showGate("authCard");
+    setAuthMessage(`需要先升级数据库：${error.message}。请在 Supabase SQL Editor 执行仓库中的 supabase/schema.sql。`, true);
+  }
+}
+
+async function openLegacyCloudWorkspace() {
+  const { data, error } = await cloudClient
+    .from(TABLES.legacy)
+    .select("payload")
+    .eq("user_id", session.user.id)
+    .maybeSingle();
+  if (error) throw error;
+  appMode = "legacy-cloud";
+  state = data?.payload ? normalizeLegacyPayload(data.payload) : loadLocalState();
+  state.selectedProjectId = state.selectedProjectId || state.projects[0]?.id;
+  setSyncStatus("待升级：兼容模式", "saving");
+  showApp();
+}
+
+async function loadCloudState() {
+  const { data: projectRows, error } = await cloudClient
+    .from(TABLES.projects)
+    .select("*")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  if (!projectRows.length) {
+    const legacy = await fetchLegacyWorkspace();
+    await migratePayloadToCloud(legacy || loadLocalState());
+    return loadCloudState();
+  }
+  const { data: taskRows, error: taskError } = await cloudClient.from(TABLES.tasks).select("*").order("display_order");
+  if (taskError) throw taskError;
+  const { data: progressRows, error: progressError } = await cloudClient.from(TABLES.progress).select("*").order("entry_date");
+  if (progressError) throw progressError;
+  const { data: logRows, error: logError } = await cloudClient.from(TABLES.logs).select("*").order("log_date");
+  if (logError) throw logError;
+  state = {
+    selectedProjectId: state.selectedProjectId || projectRows[0].id,
+    selectedDate: state.selectedDate || dateString(),
+    projects: projectRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      deadline: row.deadline,
+      summary: row.summary,
+      topRisk: row.top_risk,
+      nextStep: row.next_step,
+      isPublic: row.is_public,
+      publicSlug: row.public_slug,
+      tasks: taskRows.filter((task) => task.project_id === row.id).map((task) => ({
+        id: task.id,
+        parentId: task.parent_id,
+        risk: task.risk,
+        title: task.title,
+        responsible: task.responsible,
+        startDate: task.start_date,
+        duration: task.duration,
+        status: task.status,
+        completedDate: task.completed_date || "",
+        note: task.note || "",
+        progressEntries: progressRows.filter((entry) => entry.task_id === task.id).map((entry) => ({
+          entryDate: entry.entry_date,
+          plannedProgress: entry.planned_progress,
+          actualProgress: entry.actual_progress
+        }))
+      })),
+      dailyLogs: logRows.filter((log) => log.project_id === row.id).map((log) => ({
+        id: log.id,
+        taskId: log.task_id,
+        date: log.log_date,
+        responsible: log.responsible,
+        planText: log.plan_text,
+        actualText: log.actual_text,
+        plannedProgress: log.planned_progress,
+        actualProgress: log.actual_progress,
+        result: log.result,
+        delayReason: log.delay_reason || ""
+      }))
+    }))
+  };
+  if (!state.projects.some((project) => String(project.id) === String(state.selectedProjectId))) {
+    state.selectedProjectId = state.projects[0].id;
+  }
+}
+
+async function fetchLegacyWorkspace() {
+  const { data, error } = await cloudClient.from(TABLES.legacy).select("payload").maybeSingle();
+  if (error) return null;
+  return data?.payload ? normalizeLegacyPayload(data.payload) : null;
+}
+
+async function migratePayloadToCloud(payload) {
+  for (const sourceProject of payload.projects) {
+    const project = await insertProject({
+      name: sourceProject.name,
+      deadline: sourceProject.deadline,
+      summary: sourceProject.summary,
+      topRisk: sourceProject.topRisk,
+      nextStep: sourceProject.nextStep,
+      isPublic: sourceProject.isPublic,
+      publicSlug: sourceProject.publicSlug || slugFor(sourceProject.name)
+    });
+    const taskIds = new Map();
+    for (const sourceTask of orderedTasks(sourceProject.tasks)) {
+      const task = await insertTask(project.id, {
+        ...sourceTask,
+        parentId: sourceTask.parentId ? taskIds.get(String(sourceTask.parentId)) || null : null
+      });
+      taskIds.set(String(sourceTask.id), task.id);
+      for (const entry of sourceTask.progressEntries || []) {
+        await upsertProgress(project.id, task.id, entry.entryDate, entry.plannedProgress, entry.actualProgress);
+      }
+    }
+    for (const sourceLog of sourceProject.dailyLogs) {
+      const taskId = taskIds.get(String(sourceLog.taskId));
+      if (taskId) await insertDailyLog(project.id, taskId, sourceLog);
+    }
+  }
+}
+
+function persistLocal() {
+  localStorage.setItem(LOCAL_PREVIEW_KEY, JSON.stringify(state));
+  setSyncStatus("仅保存在本机", "local");
+}
+
+function usesDocumentStorage() {
+  return appMode === "local" || appMode === "legacy-cloud";
+}
+
+async function persistLegacyCloud() {
+  const { error } = await cloudClient.from(TABLES.legacy).upsert({
+    user_id: session.user.id,
+    payload: state,
+    updated_at: new Date().toISOString()
+  }, { onConflict: "user_id" });
+  if (error) throw error;
+  setSyncStatus("待升级：兼容模式", "saving");
+}
+
+function startLocalPreview() {
+  appMode = "local";
+  state = loadLocalState();
+  state.selectedProjectId = state.selectedProjectId || state.projects[0]?.id;
+  document.getElementById("accountLabel").textContent = "本机预览";
+  document.getElementById("logoutButton").textContent = "返回登录";
+  setSyncStatus("仅保存在本机", "local");
+  showApp();
+}
+
+async function insertProject(project) {
+  const row = {
+    owner_id: session.user.id,
+    name: project.name,
+    deadline: project.deadline,
+    summary: project.summary,
+    top_risk: project.topRisk,
+    next_step: project.nextStep,
+    is_public: Boolean(project.isPublic),
+    public_slug: project.publicSlug || slugFor(project.name)
+  };
+  const { data, error } = await cloudClient.from(TABLES.projects).insert(row).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function insertTask(projectId, task) {
+  const row = {
+    owner_id: session.user.id,
+    project_id: projectId,
+    parent_id: task.parentId || null,
+    risk: task.risk,
+    title: task.title,
+    responsible: task.responsible,
+    start_date: task.startDate,
+    duration: Number(task.duration),
+    status: task.status,
+    completed_date: task.completedDate || null,
+    note: task.note || "",
+    display_order: Date.now()
+  };
+  const { data, error } = await cloudClient.from(TABLES.tasks).insert(row).select().single();
+  if (error) throw error;
+  return data;
+}
+
+async function upsertProgress(projectId, taskId, entryDate, plannedProgress, actualProgress) {
+  const { error } = await cloudClient.from(TABLES.progress).upsert({
+    owner_id: session.user.id,
+    project_id: projectId,
+    task_id: taskId,
+    entry_date: entryDate,
+    planned_progress: Number(plannedProgress),
+    actual_progress: Number(actualProgress)
+  }, { onConflict: "task_id,entry_date" });
+  if (error) throw error;
+}
+
+async function insertDailyLog(projectId, taskId, log) {
+  const { error } = await cloudClient.from(TABLES.logs).upsert({
+    owner_id: session.user.id,
+    project_id: projectId,
+    task_id: taskId,
+    log_date: log.date,
+    responsible: log.responsible,
+    plan_text: log.planText,
+    actual_text: log.actualText,
+    planned_progress: Number(log.plannedProgress),
+    actual_progress: Number(log.actualProgress),
+    result: log.result,
+    delay_reason: log.delayReason || ""
+  }, { onConflict: "task_id,log_date" });
+  if (error) throw error;
+}
+
+async function syncCloudTaskStatus(taskId, actualProgress, completedDate) {
+  const { error } = await cloudClient.from(TABLES.tasks).update({
+    status: actualProgress === 100 ? "Closed" : actualProgress > 0 ? "Ongoing" : "Open",
+    completed_date: actualProgress === 100 ? completedDate : null
+  }).eq("id", taskId);
+  if (error) throw error;
+}
+
+async function refreshAfterChange() {
+  if (appMode === "cloud") {
+    setSyncStatus("保存中...", "saving");
+    await loadCloudState();
+    setSyncStatus("云端已同步", "saved");
+  } else if (appMode === "legacy-cloud") {
+    await persistLegacyCloud();
+  } else {
+    persistLocal();
+  }
+  render();
 }
 
 function render() {
   const project = currentProject();
   if (!project) return;
-  if (!state.selectedDate) state.selectedDate = todayString();
   document.getElementById("projectName").textContent = project.name;
   document.getElementById("projectSummary").textContent = project.summary;
   document.getElementById("publicSummary").textContent = project.summary;
   document.getElementById("projectTopRisk").textContent = project.topRisk;
   document.getElementById("projectNextStep").textContent = project.nextStep;
   document.getElementById("projectDeadline").textContent = project.deadline;
-  const remaining = daysBetween(todayString(), project.deadline);
+  const remaining = daysBetween(dateString(), project.deadline);
   document.getElementById("deadlineCountdown").textContent =
     remaining >= 0 ? `距离 deadline 还剩 ${remaining} 天` : `已超出 deadline ${Math.abs(remaining)} 天`;
   document.getElementById("selectedDateBadge").textContent = `当前查看：${state.selectedDate}`;
@@ -426,82 +610,61 @@ function render() {
   renderGantt(project);
   renderDailySummary(project);
   renderDailyTable(project);
+  renderMobileTasks(project);
   renderTaskParentOptions(project);
-  renderOwnerSuggestions(project);
   renderDailyOwnerOptions(project);
   renderDailyTaskOptions(project);
+  document.getElementById("ownerSuggestions").innerHTML = ownersOf(project).map((owner) => `<option value="${escapeHtml(owner)}"></option>`).join("");
 }
 
 function renderProjectSelect() {
-  const select = document.getElementById("projectSelect");
-  select.innerHTML = state.projects
-    .map((project) => `<option value="${project.id}"${project.id === state.selectedProjectId ? " selected" : ""}>${escapeHtml(project.name)}</option>`)
-    .join("");
+  document.getElementById("projectSelect").innerHTML = state.projects.map((project) =>
+    `<option value="${project.id}"${String(project.id) === String(state.selectedProjectId) ? " selected" : ""}>${escapeHtml(project.name)}</option>`
+  ).join("");
 }
 
 function renderFilters(project) {
-  const ownerSelect = document.getElementById("ownerFilter");
-  const selected = ownerSelect.value || "全部";
-  const owners = ["全部", ...ownersOf(project)];
-  ownerSelect.innerHTML = owners
-    .map((owner) => `<option value="${escapeHtml(owner)}"${owner === selected ? " selected" : ""}>${escapeHtml(owner)}</option>`)
-    .join("");
-}
-
-function renderMetrics(project) {
-  document.getElementById("overallProgress").textContent = `${average(project.tasks.map((task) => Number(task.actualProgress)))}%`;
-  document.getElementById("plannedProgress").textContent = `${average(project.tasks.map((task) => Number(task.plannedProgress || 0)))}%`;
-  const overdue = project.tasks.filter((task) => task.status !== "Closed" && endDateOf(task) < todayString()).length;
-  document.getElementById("overdueCount").textContent = overdue;
+  const ownerFilter = document.getElementById("ownerFilter");
+  const selected = ownerFilter.value || "全部";
+  ownerFilter.innerHTML = ["全部", ...ownersOf(project)].map((owner) =>
+    `<option value="${escapeHtml(owner)}"${owner === selected ? " selected" : ""}>${escapeHtml(owner)}</option>`
+  ).join("");
 }
 
 function filteredTasks(project) {
   const owner = document.getElementById("ownerFilter").value || "全部";
   const status = document.getElementById("statusFilter").value || "全部";
-  return orderedTasks(project.tasks).filter((task) => {
-    return (owner === "全部" || task.owner === owner) && (status === "全部" || task.status === status);
-  });
+  return orderedTasks(project.tasks).filter((task) =>
+    (owner === "全部" || task.responsible === owner) && (status === "全部" || task.status === status)
+  );
+}
+
+function renderMetrics(project) {
+  const progress = project.tasks.map((task) => latestProgress(task));
+  document.getElementById("overallProgress").textContent = `${average(progress.map((entry) => entry.actualProgress))}%`;
+  document.getElementById("plannedProgress").textContent = `${average(progress.map((entry) => entry.plannedProgress))}%`;
+  const overdue = project.tasks.filter((task) => task.status !== "Closed" && taskEndDate(task) < dateString()).length;
+  document.getElementById("overdueCount").textContent = overdue;
 }
 
 function renderTaskTable(project) {
-  const tasks = filteredTasks(project);
-  document.getElementById("taskTableBody").innerHTML = tasks.map((task) => `
-    <tr>
-      <td><span class="risk-pill ${riskClass(task.risk)}">${task.risk}</span></td>
-      <td>
-        <div class="task-name-cell ${task.depth ? "task-child" : ""}">
-          ${task.depth ? `<span class="task-level" style="margin-left:${task.depth * 12}px"></span>` : ""}
-          <span>${escapeHtml(task.title)}</span>
-        </div>
-      </td>
-      <td>${escapeHtml(task.owner)}</td>
-      <td>${task.startDate}</td>
-      <td>${task.duration}</td>
-      <td>${endDateOf(task)}</td>
-      <td><span class="status-pill">${task.status}</span></td>
-      <td class="progress-cell">
-        <div class="progress-line plan"><span style="width:${task.plannedProgress || 0}%"></span></div>
-        <small>${task.plannedProgress || 0}%</small>
-      </td>
-      <td class="progress-cell">
-        <div class="progress-line"><span style="width:${task.actualProgress}%"></span></div>
-        <small>${task.actualProgress}%</small>
-      </td>
-      <td>${task.completedDate || "-"}</td>
-      <td>
-        <div class="row-actions">
-          <button class="mini-button" data-action="edit-task" data-id="${task.id}">编辑</button>
-          <button class="mini-button" data-action="delete-task" data-id="${task.id}">删除</button>
-        </div>
-      </td>
-    </tr>
-  `).join("");
-}
-
-function buildTimelineDates(tasks) {
-  const start = tasks.map((task) => task.startDate).sort()[0];
-  const end = tasks.map((task) => endDateOf(task)).sort().at(-1);
-  return Array.from({ length: daysBetween(start, end) + 1 }, (_, index) => addDays(start, index));
+  document.getElementById("taskTableBody").innerHTML = filteredTasks(project).map((task) => {
+    const progress = latestProgress(task);
+    return `
+      <tr>
+        <td><span class="risk-pill ${riskClass(task.risk)}">${task.risk}</span></td>
+        <td><div class="task-name-cell ${task.depth ? "task-child" : ""}">${task.depth ? `<span class="task-level" style="margin-left:${task.depth * 12}px"></span>` : ""}<span>${escapeHtml(task.title)}</span></div></td>
+        <td>${escapeHtml(task.responsible)}</td>
+        <td>${task.startDate}</td>
+        <td>${task.duration}</td>
+        <td>${taskEndDate(task)}</td>
+        <td><span class="status-pill">${task.status}</span></td>
+        <td class="progress-cell"><div class="progress-line plan"><span style="width:${progress.plannedProgress}%"></span></div><small>${progress.plannedProgress}%</small></td>
+        <td class="progress-cell"><div class="progress-line"><span style="width:${progress.actualProgress}%"></span></div><small>${progress.actualProgress}%</small></td>
+        <td>${task.completedDate || "-"}</td>
+        <td><div class="row-actions"><button class="mini-button" data-action="edit-task" data-id="${task.id}">编辑</button><button class="mini-button" data-action="delete-task" data-id="${task.id}">删除</button></div></td>
+      </tr>`;
+  }).join("");
 }
 
 function renderGantt(project) {
@@ -513,113 +676,89 @@ function renderGantt(project) {
     rows.innerHTML = '<p class="empty-state">暂无任务</p>';
     return;
   }
-  const dates = buildTimelineDates(tasks);
+  const start = tasks.map((task) => task.startDate).sort()[0];
+  const end = tasks.map((task) => taskEndDate(task)).sort().at(-1);
+  const dates = Array.from({ length: daysBetween(start, end) + 1 }, (_, index) => addDays(start, index));
   header.style.setProperty("--days", dates.length);
   rows.style.setProperty("--days", dates.length);
-  header.innerHTML = '<div class="gantt-task-name">任务</div>' + dates.map((date) => `
-    <div class="gantt-day">
-      <button class="date-button${date === state.selectedDate ? " active" : ""}" data-date="${date}">${date.slice(5)}</button>
-    </div>
-  `).join("");
+  header.innerHTML = '<div class="gantt-task-name">任务</div>' + dates.map((date) =>
+    `<div class="gantt-day"><button class="date-button${date === state.selectedDate ? " active" : ""}" data-date="${date}">${date.slice(5)}</button></div>`
+  ).join("");
   rows.innerHTML = tasks.map((task) => {
-    const finishedCells = Math.ceil((task.actualProgress / 100) * task.duration);
-    const cells = dates.map((date) => {
-      const active = date >= task.startDate && date <= endDateOf(task);
-      const taskDay = active ? daysBetween(task.startDate, date) : -1;
+    const progress = latestProgress(task).actualProgress;
+    const doneCells = Math.ceil((progress / 100) * task.duration);
+    return `<div class="gantt-row"><div class="gantt-task-name">${escapeHtml(task.title)}</div><div class="gantt-cells">${dates.map((date) => {
+      const active = date >= task.startDate && date <= taskEndDate(task);
+      const offset = active ? daysBetween(task.startDate, date) : -1;
       const classes = ["gantt-cell"];
       if (active) classes.push("active");
-      if (active && taskDay < finishedCells) classes.push("done");
-      if (date === todayString()) classes.push("today");
+      if (active && offset < doneCells) classes.push("done");
+      if (date === dateString()) classes.push("today");
       if (date === state.selectedDate) classes.push("selected");
-      return `<div class="${classes.join(" ")}" data-date="${date}" title="${escapeHtml(task.title)}"></div>`;
-    }).join("");
-    return `<div class="gantt-row"><div class="gantt-task-name">${escapeHtml(task.title)}</div><div class="gantt-cells">${cells}</div></div>`;
+      return `<div class="${classes.join(" ")}" data-date="${date}"></div>`;
+    }).join("")}</div></div>`;
   }).join("");
 }
 
 function renderDailySummary(project) {
   const logs = project.dailyLogs.filter((log) => log.date === state.selectedDate);
-  const delayed = logs.filter((log) => log.result === "延期").length;
   document.getElementById("dailySummary").innerHTML = `
-    <article class="summary-card">
-      <span>查看日期</span>
-      <strong>${state.selectedDate}</strong>
-      <p>点击甘特图日期切换。</p>
-    </article>
-    <article class="summary-card">
-      <span>日报数量</span>
-      <strong>${logs.length}</strong>
-      <p>${logs.filter((log) => log.taskId).length} 条已关联任务。</p>
-    </article>
-    <article class="summary-card">
-      <span>延期条数</span>
-      <strong>${delayed}</strong>
-      <p>延期记录必须填写原因。</p>
-    </article>
-  `;
+    <article class="summary-card"><span>查看日期</span><strong>${state.selectedDate}</strong><p>点击甘特图日期切换。</p></article>
+    <article class="summary-card"><span>日报数量</span><strong>${logs.length}</strong><p>${logs.length} 条已关联任务。</p></article>
+    <article class="summary-card"><span>延期条数</span><strong>${logs.filter((log) => log.result === "延期").length}</strong><p>延期记录必须填写原因。</p></article>`;
 }
 
 function renderDailyTable(project) {
-  const taskMap = new Map(project.tasks.map((task) => [task.id, task.title]));
+  const taskMap = new Map(project.tasks.map((task) => [String(task.id), task.title]));
   const logs = project.dailyLogs.filter((log) => log.date === state.selectedDate);
   document.getElementById("dailyTableBody").innerHTML = logs.length ? logs.map((log) => `
     <tr>
-      <td>${escapeHtml(log.owner)}</td>
-      <td>${escapeHtml(log.planText)}</td>
-      <td>${escapeHtml(log.actualText)}</td>
-      <td>${escapeHtml(taskMap.get(log.taskId) || "-")}</td>
-      <td>${log.progressAfter}%</td>
-      <td><span class="status-pill">${log.result}</span></td>
-      <td>${escapeHtml(log.delayReason || "-")}</td>
-      <td>
-        <div class="row-actions">
-          <button class="mini-button" data-action="edit-log" data-id="${log.id}">编辑</button>
-          <button class="mini-button" data-action="delete-log" data-id="${log.id}">删除</button>
-        </div>
-      </td>
-    </tr>
-  `).join("") : '<tr><td colspan="8" class="empty-state">这一天还没有日报记录。</td></tr>';
+      <td>${escapeHtml(log.responsible)}</td><td>${escapeHtml(log.planText)}</td><td>${escapeHtml(log.actualText)}</td>
+      <td>${escapeHtml(taskMap.get(String(log.taskId)) || "-")}</td><td>${log.plannedProgress}%</td><td>${log.actualProgress}%</td>
+      <td><span class="status-pill">${log.result}</span></td><td>${escapeHtml(log.delayReason || "-")}</td>
+      <td><div class="row-actions"><button class="mini-button" data-action="edit-log" data-id="${log.id}">编辑</button><button class="mini-button" data-action="delete-log" data-id="${log.id}">删除</button></div></td>
+    </tr>`).join("") : '<tr><td colspan="9" class="empty-state">这一天还没有日报记录。</td></tr>';
+}
+
+function renderMobileTasks(project) {
+  const openTasks = project.tasks.filter((task) => task.status !== "Closed").slice(0, 6);
+  document.getElementById("mobileTaskList").innerHTML = openTasks.map((task) => {
+    const progress = latestProgress(task);
+    return `<article class="mobile-task"><strong>${escapeHtml(task.title)}</strong><div class="mobile-task-meta"><span>${escapeHtml(task.responsible)} · ${task.status}</span><span>${progress.actualProgress}%</span></div></article>`;
+  }).join("") || '<p class="empty-state">当前没有未完成任务。</p>';
 }
 
 function renderTaskParentOptions(project) {
-  document.getElementById("taskParent").innerHTML = '<option value="">无父任务</option>' + orderedTasks(project.tasks)
-    .map((task) => `<option value="${task.id}">${"&nbsp;".repeat(task.depth * 2)}${escapeHtml(task.title)}</option>`)
-    .join("");
-}
-
-function renderOwnerSuggestions(project) {
-  document.getElementById("ownerSuggestions").innerHTML = ownersOf(project)
-    .map((owner) => `<option value="${escapeHtml(owner)}"></option>`)
-    .join("");
+  document.getElementById("taskParent").innerHTML = '<option value="">无父任务</option>' + orderedTasks(project.tasks).map((task) =>
+    `<option value="${task.id}">${"&nbsp;".repeat(task.depth * 2)}${escapeHtml(task.title)}</option>`
+  ).join("");
 }
 
 function renderDailyOwnerOptions(project) {
-  const owners = ownersOf(project);
-  document.getElementById("dailyOwner").innerHTML = owners.length
-    ? owners.map((owner) => `<option value="${escapeHtml(owner)}">${escapeHtml(owner)}</option>`).join("")
-    : '<option value="">暂无负责人</option>';
+  document.getElementById("dailyOwner").innerHTML = ownersOf(project).map((owner) => `<option value="${escapeHtml(owner)}">${escapeHtml(owner)}</option>`).join("");
 }
 
 function renderDailyTaskOptions(project) {
-  document.getElementById("dailyTask").innerHTML = project.tasks
-    .map((task) => `<option value="${task.id}">${escapeHtml(task.title)}</option>`)
-    .join("");
+  document.getElementById("dailyTask").innerHTML = project.tasks.map((task) => `<option value="${task.id}">${escapeHtml(task.title)}</option>`).join("");
 }
 
-function openProjectEditor(project) {
+function openProjectEditor(project = null) {
   document.getElementById("projectForm").reset();
   document.getElementById("projectIdInput").value = project?.id || "";
   document.getElementById("projectModalTitle").textContent = project ? "项目设置" : "新增项目";
   document.getElementById("projectNameInput").value = project?.name || "";
-  document.getElementById("projectDeadlineInput").value = project?.deadline || todayString();
+  document.getElementById("projectDeadlineInput").value = project?.deadline || dateString();
   document.getElementById("projectSummaryInput").value = project?.summary || "";
   document.getElementById("projectTopRiskInput").value = project?.topRisk || "";
   document.getElementById("projectNextStepInput").value = project?.nextStep || "";
+  document.getElementById("projectPublicInput").checked = Boolean(project?.isPublic);
+  document.getElementById("copyShareLinkButton").disabled = !project?.isPublic;
   document.getElementById("projectModal").showModal();
 }
 
-function openTaskEditor(task) {
+function openTaskEditor(task = null) {
   const project = currentProject();
+  const progress = task ? latestProgress(task) : { plannedProgress: 0, actualProgress: 0 };
   document.getElementById("taskForm").reset();
   renderTaskParentOptions(project);
   document.getElementById("taskModalTitle").textContent = task ? "编辑任务" : "新增任务";
@@ -627,267 +766,353 @@ function openTaskEditor(task) {
   document.getElementById("taskParent").value = task?.parentId || "";
   document.getElementById("taskRisk").value = task?.risk || "M";
   document.getElementById("taskTitle").value = task?.title || "";
-  document.getElementById("taskOwner").value = task?.owner || ownersOf(project)[0] || "";
-  document.getElementById("taskStart").value = task?.startDate || state.selectedDate || todayString();
+  document.getElementById("taskOwner").value = task?.responsible || ownersOf(project)[0] || "";
+  document.getElementById("taskStart").value = task?.startDate || state.selectedDate;
   document.getElementById("taskDuration").value = task?.duration || 3;
   document.getElementById("taskStatus").value = task?.status || "Open";
-  document.getElementById("taskPlannedProgress").value = task?.plannedProgress ?? 0;
-  document.getElementById("taskProgress").value = task?.actualProgress ?? 0;
+  document.getElementById("taskPlannedProgress").value = progress.plannedProgress;
+  document.getElementById("taskProgress").value = progress.actualProgress;
   document.getElementById("taskCompletedDate").value = task?.completedDate || "";
   document.getElementById("taskNote").value = task?.note || "";
   document.getElementById("taskModal").showModal();
 }
 
-function openDailyEditor(log) {
+function openDailyEditor(log = null) {
   const project = currentProject();
   document.getElementById("dailyForm").reset();
   renderDailyOwnerOptions(project);
   renderDailyTaskOptions(project);
   document.getElementById("dailyModalTitle").textContent = log ? "编辑日报" : "新增日报";
   document.getElementById("dailyIdInput").value = log?.id || "";
-  document.getElementById("dailyDate").value = log?.date || state.selectedDate || todayString();
-  document.getElementById("dailyOwner").value = log?.owner || ownersOf(project)[0] || "";
+  document.getElementById("dailyDate").value = log?.date || state.selectedDate;
+  document.getElementById("dailyOwner").value = log?.responsible || ownersOf(project)[0] || "";
   document.getElementById("dailyTask").value = String(log?.taskId || project.tasks[0]?.id || "");
   document.getElementById("dailyPlanText").value = log?.planText || "";
   document.getElementById("dailyActualText").value = log?.actualText || "";
-  document.getElementById("dailyProgressAfter").value = log?.progressAfter ?? 0;
-  document.getElementById("dailyResult").value = log?.result || "完成";
+  document.getElementById("dailyPlannedProgress").value = log?.plannedProgress ?? 0;
+  document.getElementById("dailyProgressAfter").value = log?.actualProgress ?? 0;
+  document.getElementById("dailyResult").value = log?.result || "部分完成";
   document.getElementById("dailyDelayReason").value = log?.delayReason || "";
   document.getElementById("dailyModal").showModal();
 }
 
-function upsertProject(formData) {
-  const id = Number(formData.id);
-  if (id) {
-    Object.assign(state.projects.find((project) => project.id === id), formData);
+async function saveProjectFromForm() {
+  const existing = currentProject();
+  const id = document.getElementById("projectIdInput").value;
+  const values = {
+    name: document.getElementById("projectNameInput").value.trim(),
+    deadline: document.getElementById("projectDeadlineInput").value,
+    summary: document.getElementById("projectSummaryInput").value.trim(),
+    topRisk: document.getElementById("projectTopRiskInput").value.trim(),
+    nextStep: document.getElementById("projectNextStepInput").value.trim(),
+    isPublic: document.getElementById("projectPublicInput").checked,
+    publicSlug: (id ? state.projects.find((project) => String(project.id) === id)?.publicSlug : "") || slugFor(document.getElementById("projectNameInput").value)
+  };
+  if (usesDocumentStorage()) {
+    if (id) Object.assign(state.projects.find((project) => String(project.id) === id), values);
+    else {
+      const project = { ...values, id: crypto.randomUUID(), tasks: [], dailyLogs: [] };
+      state.projects.push(project);
+      state.selectedProjectId = project.id;
+    }
+  } else if (id) {
+    const { error } = await cloudClient.from(TABLES.projects).update({
+      name: values.name, deadline: values.deadline, summary: values.summary, top_risk: values.topRisk,
+      next_step: values.nextStep, is_public: values.isPublic, public_slug: values.publicSlug
+    }).eq("id", id);
+    if (error) throw error;
+  } else {
+    const row = await insertProject(values);
+    state.selectedProjectId = row.id;
+  }
+  await refreshAfterChange();
+}
+
+async function saveTaskFromForm() {
+  const project = currentProject();
+  const id = document.getElementById("taskIdInput").value;
+  const values = {
+    parentId: document.getElementById("taskParent").value || null,
+    risk: document.getElementById("taskRisk").value,
+    title: document.getElementById("taskTitle").value.trim(),
+    responsible: document.getElementById("taskOwner").value.trim(),
+    startDate: document.getElementById("taskStart").value,
+    duration: Number(document.getElementById("taskDuration").value),
+    status: document.getElementById("taskStatus").value,
+    completedDate: document.getElementById("taskCompletedDate").value,
+    note: document.getElementById("taskNote").value.trim()
+  };
+  const planned = Number(document.getElementById("taskPlannedProgress").value);
+  const actual = Number(document.getElementById("taskProgress").value);
+  if (usesDocumentStorage()) {
+    let task;
+    if (id) {
+      task = project.tasks.find((item) => String(item.id) === id);
+      Object.assign(task, values);
+    } else {
+      task = { ...values, id: crypto.randomUUID(), progressEntries: [] };
+      project.tasks.push(task);
+    }
+    task.progressEntries.push({ entryDate: state.selectedDate, plannedProgress: planned, actualProgress: actual });
+  } else {
+    let taskId = id;
+    if (id) {
+      const { error } = await cloudClient.from(TABLES.tasks).update({
+        parent_id: values.parentId || null, risk: values.risk, title: values.title, responsible: values.responsible,
+        start_date: values.startDate, duration: values.duration, status: values.status,
+        completed_date: values.completedDate || null, note: values.note
+      }).eq("id", id);
+      if (error) throw error;
+    } else {
+      const row = await insertTask(project.id, values);
+      taskId = row.id;
+    }
+    await upsertProgress(project.id, taskId, state.selectedDate, planned, actual);
+  }
+  await refreshAfterChange();
+}
+
+async function saveLogFromForm() {
+  const project = currentProject();
+  const id = document.getElementById("dailyIdInput").value;
+  const log = {
+    id: id || crypto.randomUUID(),
+    taskId: document.getElementById("dailyTask").value,
+    date: document.getElementById("dailyDate").value,
+    responsible: document.getElementById("dailyOwner").value,
+    planText: document.getElementById("dailyPlanText").value.trim(),
+    actualText: document.getElementById("dailyActualText").value.trim(),
+    plannedProgress: Number(document.getElementById("dailyPlannedProgress").value),
+    actualProgress: Number(document.getElementById("dailyProgressAfter").value),
+    result: document.getElementById("dailyResult").value,
+    delayReason: document.getElementById("dailyDelayReason").value.trim()
+  };
+  if (log.result === "延期" && !log.delayReason) throw new Error("日报结果为延期时，必须填写延期原因。");
+  if (usesDocumentStorage()) {
+    const index = project.dailyLogs.findIndex((item) => String(item.id) === id);
+    if (index >= 0) {
+      const oldLog = project.dailyLogs[index];
+      const oldTask = project.tasks.find((item) => String(item.id) === String(oldLog.taskId));
+      oldTask.progressEntries = oldTask.progressEntries.filter((entry) => entry.entryDate !== oldLog.date);
+      project.dailyLogs[index] = log;
+    } else {
+      project.dailyLogs.push(log);
+    }
+    const task = project.tasks.find((item) => String(item.id) === String(log.taskId));
+    task.progressEntries.push({ entryDate: log.date, plannedProgress: log.plannedProgress, actualProgress: log.actualProgress });
+    task.status = log.actualProgress === 100 ? "Closed" : log.actualProgress > 0 ? "Ongoing" : "Open";
+    task.completedDate = log.actualProgress === 100 ? log.date : "";
+  } else {
+    const oldLog = id ? project.dailyLogs.find((item) => String(item.id) === id) : null;
+    if (oldLog) {
+      const { error } = await cloudClient.from(TABLES.logs).update({
+        task_id: log.taskId,
+        log_date: log.date,
+        responsible: log.responsible,
+        plan_text: log.planText,
+        actual_text: log.actualText,
+        planned_progress: log.plannedProgress,
+        actual_progress: log.actualProgress,
+        result: log.result,
+        delay_reason: log.delayReason
+      }).eq("id", oldLog.id);
+      if (error) throw error;
+      if (String(oldLog.taskId) !== String(log.taskId) || oldLog.date !== log.date) {
+        const { error: removeOldError } = await cloudClient.from(TABLES.progress).delete().eq("task_id", oldLog.taskId).eq("entry_date", oldLog.date);
+        if (removeOldError) throw removeOldError;
+      }
+    } else {
+      await insertDailyLog(project.id, log.taskId, log);
+    }
+    await upsertProgress(project.id, log.taskId, log.date, log.plannedProgress, log.actualProgress);
+    await syncCloudTaskStatus(log.taskId, log.actualProgress, log.date);
+  }
+  state.selectedDate = log.date;
+  await refreshAfterChange();
+}
+
+function download(name, type, content) {
+  const blob = new Blob([content], { type });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function exportJson() {
+  const project = currentProject();
+  download(`${project.name}-backup-${dateString()}.json`, "application/json;charset=utf-8", JSON.stringify(project, null, 2));
+}
+
+function exportCsv() {
+  const project = currentProject();
+  const rows = [["任务", "负责人", "风险", "开始日期", "结束日期", "状态", "计划进度%", "实际进度%", "完成日期"]];
+  project.tasks.forEach((task) => {
+    const progress = latestProgress(task);
+    rows.push([task.title, task.responsible, task.risk, task.startDate, taskEndDate(task), task.status, progress.plannedProgress, progress.actualProgress, task.completedDate]);
+  });
+  const csv = rows.map((row) => row.map((cell) => `"${String(cell || "").replaceAll('"', '""')}"`).join(",")).join("\r\n");
+  download(`${project.name}-tasks-${dateString()}.csv`, "text/csv;charset=utf-8", `\ufeff${csv}`);
+}
+
+async function copyShareLink() {
+  const project = currentProject();
+  if (appMode === "legacy-cloud") {
+    alert("公开链接功能将在执行数据库升级脚本后启用。");
     return;
   }
-  const project = { ...formData, id: Date.now(), tasks: [], dailyLogs: [] };
-  state.projects.push(project);
-  state.selectedProjectId = project.id;
-}
-
-function upsertTask(formData) {
-  const project = currentProject();
-  const id = Number(formData.id);
-  const task = {
-    id: id || Date.now(),
-    parentId: formData.parentId ? Number(formData.parentId) : null,
-    risk: formData.risk,
-    title: formData.title,
-    owner: formData.owner,
-    startDate: formData.startDate,
-    duration: Number(formData.duration),
-    status: formData.status,
-    plannedProgress: Number(formData.plannedProgress),
-    actualProgress: Number(formData.actualProgress),
-    completedDate: formData.completedDate,
-    note: formData.note
-  };
-  if (task.id === task.parentId) task.parentId = null;
-  const index = project.tasks.findIndex((item) => item.id === id);
-  if (index >= 0) project.tasks[index] = task;
-  else project.tasks.push(task);
-}
-
-function applyLogToTask(project, log) {
-  const task = project.tasks.find((item) => item.id === Number(log.taskId));
-  if (!task) return;
-  task.actualProgress = Number(log.progressAfter);
-  if (task.actualProgress >= 100) {
-    task.status = "Closed";
-    task.actualProgress = 100;
-    task.completedDate = log.date;
-  } else if (task.actualProgress > 0) {
-    task.status = "Ongoing";
-    task.completedDate = "";
-  } else {
-    task.status = "Open";
-    task.completedDate = "";
+  if (!project.isPublic) {
+    alert("请先勾选“允许对外只读展示”并保存项目。");
+    return;
   }
-}
-
-function recomputeTaskFromLogs(project, taskId) {
-  const logs = project.dailyLogs
-    .filter((log) => Number(log.taskId) === Number(taskId))
-    .sort((a, b) => a.date.localeCompare(b.date));
-  if (logs.length) applyLogToTask(project, logs.at(-1));
-}
-
-function upsertLog(formData) {
-  const project = currentProject();
-  const id = Number(formData.id);
-  const log = {
-    id: id || Date.now(),
-    date: formData.date,
-    owner: formData.owner,
-    taskId: Number(formData.taskId),
-    planText: formData.planText,
-    actualText: formData.actualText,
-    progressAfter: Number(formData.progressAfter),
-    result: formData.result,
-    delayReason: formData.delayReason
-  };
-  const index = project.dailyLogs.findIndex((item) => item.id === id);
-  if (index >= 0) {
-    const previousTaskId = project.dailyLogs[index].taskId;
-    project.dailyLogs[index] = log;
-    if (previousTaskId !== log.taskId) recomputeTaskFromLogs(project, previousTaskId);
-  } else {
-    project.dailyLogs.push(log);
-  }
-  applyLogToTask(project, log);
-}
-
-function deleteTask(project, id) {
-  const ids = new Set([id]);
-  let added = true;
-  while (added) {
-    added = false;
-    project.tasks.forEach((task) => {
-      if (task.parentId && ids.has(task.parentId) && !ids.has(task.id)) {
-        ids.add(task.id);
-        added = true;
-      }
-    });
-  }
-  project.tasks = project.tasks.filter((task) => !ids.has(task.id));
-  project.dailyLogs = project.dailyLogs.filter((log) => !ids.has(Number(log.taskId)));
+  const url = `${siteUrl()}?share=${encodeURIComponent(project.publicSlug)}`;
+  await navigator.clipboard.writeText(url);
+  alert("公开链接已复制。");
 }
 
 function bindEvents() {
   document.getElementById("localPreviewButton").addEventListener("click", startLocalPreview);
+  document.getElementById("authLocalPreviewButton").addEventListener("click", startLocalPreview);
   document.getElementById("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    await signIn(document.getElementById("loginEmail").value.trim(), document.getElementById("loginPassword").value);
+    setAuthMessage("正在登录...");
+    const { data, error } = await cloudClient.auth.signInWithPassword({
+      email: document.getElementById("loginEmail").value.trim(),
+      password: document.getElementById("loginPassword").value
+    });
+    if (error) setAuthMessage(error.message, true);
+    else await openCloudWorkspace(data.session);
   });
   document.getElementById("signupForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    await signUp(document.getElementById("signupEmail").value.trim(), document.getElementById("signupPassword").value);
+    const { data, error } = await cloudClient.auth.signUp({
+      email: document.getElementById("signupEmail").value.trim(),
+      password: document.getElementById("signupPassword").value,
+      options: { emailRedirectTo: siteUrl() }
+    });
+    if (error) setAuthMessage(error.message, true);
+    else if (data.session) await openCloudWorkspace(data.session);
+    else setAuthMessage("注册邮件已发送，请在邮箱确认后登录。");
+  });
+  document.getElementById("forgotPasswordButton").addEventListener("click", () => document.getElementById("resetPasswordModal").showModal());
+  document.getElementById("resetPasswordForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const { error } = await cloudClient.auth.resetPasswordForEmail(document.getElementById("resetEmail").value.trim(), { redirectTo: siteUrl() });
+    if (error) setAuthMessage(error.message, true);
+    else {
+      document.getElementById("resetPasswordModal").close();
+      setAuthMessage("重置邮件已发送，请打开邮件中的链接。");
+    }
+  });
+  document.getElementById("newPasswordForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const { error } = await cloudClient.auth.updateUser({ password: document.getElementById("newPassword").value });
+    if (error) alert(error.message);
+    else {
+      recoveryMode = false;
+      document.getElementById("newPasswordModal").close();
+      alert("密码已更新。");
+    }
   });
   document.getElementById("logoutButton").addEventListener("click", async () => {
-    if (appMode === "local") {
-      showOnlyCard(configuredForCloud() ? "authCard" : "setupCard");
-      return;
-    }
-    await cloudClient.auth.signOut();
+    if (appMode === "local") showGate(hasCloudConfig() ? "authCard" : "setupCard");
+    else await cloudClient.auth.signOut();
   });
   document.getElementById("projectSelect").addEventListener("change", (event) => {
-    state.selectedProjectId = Number(event.target.value);
-    state.selectedDate = currentProject().tasks[0]?.startDate || todayString();
-    persistState();
+    state.selectedProjectId = event.target.value;
+    state.selectedDate = currentProject().tasks[0]?.startDate || dateString();
+    if (appMode === "local") persistLocal();
     render();
   });
-  document.getElementById("openProjectModal").addEventListener("click", () => openProjectEditor(currentProject()));
-  document.getElementById("createProjectButton").addEventListener("click", () => openProjectEditor(null));
-  document.getElementById("openTaskModal").addEventListener("click", () => openTaskEditor(null));
-  document.getElementById("openDailyModal").addEventListener("click", () => openDailyEditor(null));
   document.getElementById("ownerFilter").addEventListener("change", render);
   document.getElementById("statusFilter").addEventListener("change", render);
-
-  document.querySelectorAll("[data-close]").forEach((button) => {
-    button.addEventListener("click", () => document.getElementById(button.dataset.close).close());
-  });
-
-  document.getElementById("projectForm").addEventListener("submit", (event) => {
+  document.getElementById("openProjectModal").addEventListener("click", () => openProjectEditor(currentProject()));
+  document.getElementById("createProjectButton").addEventListener("click", () => openProjectEditor());
+  document.getElementById("openTaskModal").addEventListener("click", () => openTaskEditor());
+  document.getElementById("openDailyModal").addEventListener("click", () => openDailyEditor());
+  document.getElementById("mobileOpenDaily").addEventListener("click", () => openDailyEditor());
+  document.getElementById("exportButton").addEventListener("click", () => document.getElementById("exportModal").showModal());
+  document.getElementById("exportJsonButton").addEventListener("click", exportJson);
+  document.getElementById("exportCsvButton").addEventListener("click", exportCsv);
+  document.getElementById("copyShareLinkButton").addEventListener("click", copyShareLink);
+  document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => document.getElementById(button.dataset.close).close()));
+  document.getElementById("projectForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    upsertProject({
-      id: document.getElementById("projectIdInput").value,
-      name: document.getElementById("projectNameInput").value.trim(),
-      deadline: document.getElementById("projectDeadlineInput").value,
-      summary: document.getElementById("projectSummaryInput").value.trim(),
-      topRisk: document.getElementById("projectTopRiskInput").value.trim(),
-      nextStep: document.getElementById("projectNextStepInput").value.trim()
-    });
-    persistState();
-    document.getElementById("projectModal").close();
-    render();
+    try { await saveProjectFromForm(); document.getElementById("projectModal").close(); } catch (error) { alert(error.message); }
   });
-
-  document.getElementById("taskForm").addEventListener("submit", (event) => {
+  document.getElementById("taskForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    upsertTask({
-      id: document.getElementById("taskIdInput").value,
-      parentId: document.getElementById("taskParent").value,
-      risk: document.getElementById("taskRisk").value,
-      title: document.getElementById("taskTitle").value.trim(),
-      owner: document.getElementById("taskOwner").value.trim(),
-      startDate: document.getElementById("taskStart").value,
-      duration: document.getElementById("taskDuration").value,
-      status: document.getElementById("taskStatus").value,
-      plannedProgress: document.getElementById("taskPlannedProgress").value,
-      actualProgress: document.getElementById("taskProgress").value,
-      completedDate: document.getElementById("taskCompletedDate").value,
-      note: document.getElementById("taskNote").value.trim()
-    });
-    persistState();
-    document.getElementById("taskModal").close();
-    render();
+    try { await saveTaskFromForm(); document.getElementById("taskModal").close(); } catch (error) { alert(error.message); }
   });
-
-  document.getElementById("dailyForm").addEventListener("submit", (event) => {
+  document.getElementById("dailyForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const result = document.getElementById("dailyResult").value;
-    const delayReason = document.getElementById("dailyDelayReason").value.trim();
-    if (result === "延期" && !delayReason) {
-      alert("日报结果为延期时，必须填写延期原因。");
-      return;
-    }
-    upsertLog({
-      id: document.getElementById("dailyIdInput").value,
-      date: document.getElementById("dailyDate").value,
-      owner: document.getElementById("dailyOwner").value,
-      taskId: document.getElementById("dailyTask").value,
-      planText: document.getElementById("dailyPlanText").value.trim(),
-      actualText: document.getElementById("dailyActualText").value.trim(),
-      progressAfter: document.getElementById("dailyProgressAfter").value,
-      result,
-      delayReason
-    });
-    state.selectedDate = document.getElementById("dailyDate").value;
-    persistState();
-    document.getElementById("dailyModal").close();
-    render();
+    try { await saveLogFromForm(); document.getElementById("dailyModal").close(); } catch (error) { alert(error.message); }
   });
-
-  document.getElementById("taskTableBody").addEventListener("click", (event) => {
-    const button = event.target.closest("button");
-    if (!button) return;
-    const id = Number(button.dataset.id);
-    if (button.dataset.action === "edit-task") {
-      openTaskEditor(currentProject().tasks.find((task) => task.id === id));
-    } else if (button.dataset.action === "delete-task") {
-      deleteTask(currentProject(), id);
-      persistState();
-      render();
-    }
-  });
-
-  document.getElementById("dailyTableBody").addEventListener("click", (event) => {
+  document.getElementById("taskTableBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button");
     if (!button) return;
     const project = currentProject();
-    const id = Number(button.dataset.id);
-    if (button.dataset.action === "edit-log") {
-      openDailyEditor(project.dailyLogs.find((log) => log.id === id));
-    } else if (button.dataset.action === "delete-log") {
-      const log = project.dailyLogs.find((item) => item.id === id);
-      project.dailyLogs = project.dailyLogs.filter((item) => item.id !== id);
-      recomputeTaskFromLogs(project, log.taskId);
-      persistState();
-      render();
+    const task = project.tasks.find((item) => String(item.id) === button.dataset.id);
+    if (button.dataset.action === "edit-task") openTaskEditor(task);
+    if (button.dataset.action === "delete-task" && confirm("删除任务会同时删除子任务、日报和进度记录。确认删除？")) {
+      if (usesDocumentStorage()) {
+        const ids = new Set([String(task.id)]);
+        let foundChild = true;
+        while (foundChild) {
+          foundChild = false;
+          project.tasks.forEach((item) => {
+            if (ids.has(String(item.parentId)) && !ids.has(String(item.id))) {
+              ids.add(String(item.id));
+              foundChild = true;
+            }
+          });
+        }
+        project.tasks = project.tasks.filter((item) => !ids.has(String(item.id)));
+        project.dailyLogs = project.dailyLogs.filter((log) => !ids.has(String(log.taskId)));
+      } else {
+        const { error } = await cloudClient.from(TABLES.tasks).delete().eq("id", task.id);
+        if (error) return alert(error.message);
+      }
+      await refreshAfterChange();
     }
   });
-
-  ["ganttHeader", "ganttRows"].forEach((id) => {
-    document.getElementById(id).addEventListener("click", (event) => {
-      const dated = event.target.closest("[data-date]");
-      if (!dated) return;
-      state.selectedDate = dated.dataset.date;
-      persistState();
-      render();
-    });
+  document.getElementById("dailyTableBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    const project = currentProject();
+    const log = project.dailyLogs.find((item) => String(item.id) === button.dataset.id);
+    if (button.dataset.action === "edit-log") openDailyEditor(log);
+    if (button.dataset.action === "delete-log") {
+      if (usesDocumentStorage()) {
+        project.dailyLogs = project.dailyLogs.filter((item) => String(item.id) !== String(log.id));
+        const task = project.tasks.find((item) => String(item.id) === String(log.taskId));
+        task.progressEntries = task.progressEntries.filter((entry) => entry.entryDate !== log.date);
+      } else {
+        const { error } = await cloudClient.from(TABLES.logs).delete().eq("id", log.id);
+        if (error) return alert(error.message);
+        const { error: progressError } = await cloudClient.from(TABLES.progress).delete().eq("task_id", log.taskId).eq("entry_date", log.date);
+        if (progressError) return alert(progressError.message);
+        const { data: latest, error: latestError } = await cloudClient
+          .from(TABLES.progress)
+          .select("actual_progress,entry_date")
+          .eq("task_id", log.taskId)
+          .order("entry_date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (latestError) return alert(latestError.message);
+        await syncCloudTaskStatus(log.taskId, latest?.actual_progress || 0, latest?.entry_date || null);
+      }
+      await refreshAfterChange();
+    }
   });
+  ["ganttHeader", "ganttRows"].forEach((id) => document.getElementById(id).addEventListener("click", (event) => {
+    const target = event.target.closest("[data-date]");
+    if (!target) return;
+    state.selectedDate = target.dataset.date;
+    if (appMode === "local") persistLocal();
+    render();
+  }));
 }
 
 initialize();
