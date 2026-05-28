@@ -312,6 +312,7 @@ h2 {
 
 .primary-button,
 .ghost-button,
+.danger-button,
 .icon-button,
 .mini-button,
 .date-button {
@@ -328,6 +329,16 @@ h2 {
   border-color: var(--brand);
   color: #fff;
   font-weight: 700;
+}
+
+.danger-button {
+  background: rgba(178, 55, 43, 0.1);
+  border-color: rgba(178, 55, 43, 0.42);
+  color: #9d2d23;
+}
+
+.danger-button:hover {
+  background: rgba(178, 55, 43, 0.16);
 }
 
 .primary-button.alt {
@@ -754,6 +765,12 @@ dialog::backdrop {
   align-items: center;
 }
 
+.form-actions-right {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .form-grid.two {
   grid-template-columns: 1fr 1fr;
 }
@@ -846,6 +863,7 @@ dialog::backdrop {
   }
 
   .share-row,
+  .form-actions-right,
   .export-actions {
     align-items: stretch;
     flex-direction: column;

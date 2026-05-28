@@ -753,6 +753,9 @@ function openProjectEditor(project = null) {
   document.getElementById("projectNextStepInput").value = project?.nextStep || "";
   document.getElementById("projectPublicInput").checked = Boolean(project?.isPublic);
   document.getElementById("copyShareLinkButton").disabled = !project?.isPublic;
+  document.getElementById("deleteProjectButton").hidden = !project;
+  document.getElementById("deleteProjectButton").disabled = Boolean(project) && state.projects.length <= 1;
+  document.getElementById("deleteProjectButton").title = state.projects.length <= 1 ? "至少保留一个项目" : "";
   document.getElementById("projectModal").showModal();
 }
 
@@ -826,6 +829,30 @@ async function saveProjectFromForm() {
     state.selectedProjectId = row.id;
   }
   await refreshAfterChange();
+}
+
+async function deleteCurrentProject() {
+  const project = currentProject();
+  if (!project) return;
+  if (state.projects.length <= 1) {
+    alert("至少需要保留一个项目。请先新增项目，再删除当前项目。");
+    return;
+  }
+  const confirmed = confirm(`删除项目“${project.name}”会同时删除该项目下所有任务、日报、进度记录和公开链接。此操作不可撤销，确认删除？`);
+  if (!confirmed) return;
+  if (usesDocumentStorage()) {
+    state.projects = state.projects.filter((item) => String(item.id) !== String(project.id));
+    state.selectedProjectId = state.projects[0]?.id || null;
+    state.selectedDate = currentProject()?.tasks[0]?.startDate || dateString();
+  } else {
+    const { error } = await cloudClient.from(TABLES.projects).delete().eq("id", project.id);
+    if (error) throw error;
+    const fallback = state.projects.find((item) => String(item.id) !== String(project.id));
+    state.selectedProjectId = fallback?.id || null;
+    state.selectedDate = fallback?.tasks[0]?.startDate || dateString();
+  }
+  await refreshAfterChange();
+  document.getElementById("projectModal").close();
 }
 
 async function saveTaskFromForm() {
@@ -1036,6 +1063,9 @@ function bindEvents() {
   document.getElementById("exportJsonButton").addEventListener("click", exportJson);
   document.getElementById("exportCsvButton").addEventListener("click", exportCsv);
   document.getElementById("copyShareLinkButton").addEventListener("click", copyShareLink);
+  document.getElementById("deleteProjectButton").addEventListener("click", async () => {
+    try { await deleteCurrentProject(); } catch (error) { alert(error.message); }
+  });
   document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => document.getElementById(button.dataset.close).close()));
   document.getElementById("projectForm").addEventListener("submit", async (event) => {
     event.preventDefault();
