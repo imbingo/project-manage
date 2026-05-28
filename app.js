@@ -590,6 +590,19 @@ async function refreshAfterChange() {
   render();
 }
 
+function selectDate(date) {
+  state.selectedDate = date;
+  if (appMode === "local") persistLocal();
+  render();
+}
+
+function openDatePicker() {
+  const input = document.getElementById("datePickerInput");
+  input.value = state.selectedDate || dateString();
+  document.getElementById("datePickerModal").showModal();
+  input.focus();
+}
+
 function render() {
   const project = currentProject();
   if (!project) return;
@@ -676,8 +689,10 @@ function renderGantt(project) {
     rows.innerHTML = '<p class="empty-state">暂无任务</p>';
     return;
   }
-  const start = tasks.map((task) => task.startDate).sort()[0];
-  const end = tasks.map((task) => taskEndDate(task)).sort().at(-1);
+  const taskStart = tasks.map((task) => task.startDate).sort()[0];
+  const taskEnd = tasks.map((task) => taskEndDate(task)).sort().at(-1);
+  const start = state.selectedDate && state.selectedDate < taskStart ? state.selectedDate : taskStart;
+  const end = state.selectedDate && state.selectedDate > taskEnd ? state.selectedDate : taskEnd;
   const dates = Array.from({ length: daysBetween(start, end) + 1 }, (_, index) => addDays(start, index));
   header.style.setProperty("--days", dates.length);
   rows.style.setProperty("--days", dates.length);
@@ -1060,6 +1075,7 @@ function bindEvents() {
   document.getElementById("openDailyModal").addEventListener("click", () => openDailyEditor());
   document.getElementById("mobileOpenDaily").addEventListener("click", () => openDailyEditor());
   document.getElementById("exportButton").addEventListener("click", () => document.getElementById("exportModal").showModal());
+  document.getElementById("selectedDateBadge").addEventListener("click", openDatePicker);
   document.getElementById("exportJsonButton").addEventListener("click", exportJson);
   document.getElementById("exportCsvButton").addEventListener("click", exportCsv);
   document.getElementById("copyShareLinkButton").addEventListener("click", copyShareLink);
@@ -1078,6 +1094,13 @@ function bindEvents() {
   document.getElementById("dailyForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try { await saveLogFromForm(); document.getElementById("dailyModal").close(); } catch (error) { alert(error.message); }
+  });
+  document.getElementById("datePickerForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const date = document.getElementById("datePickerInput").value;
+    if (!date) return;
+    document.getElementById("datePickerModal").close();
+    selectDate(date);
   });
   document.getElementById("taskTableBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button");
@@ -1139,9 +1162,7 @@ function bindEvents() {
   ["ganttHeader", "ganttRows"].forEach((id) => document.getElementById(id).addEventListener("click", (event) => {
     const target = event.target.closest("[data-date]");
     if (!target) return;
-    state.selectedDate = target.dataset.date;
-    if (appMode === "local") persistLocal();
-    render();
+    selectDate(target.dataset.date);
   }));
 }
 
