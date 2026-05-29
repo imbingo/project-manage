@@ -60,15 +60,13 @@ Page({
       order: "display_order.asc"
     })).map(models.toTask);
     const taskIndex = Math.max(0, tasks.findIndex((task) => task.id === taskId));
-    const task = tasks[taskIndex] || {};
     this.setData({
       tasks,
       taskNames: tasks.map((item) => item.title),
       taskIndex,
-      "form.projectId": projectId,
-      "form.taskId": task.id || "",
-      "form.responsible": task.responsible || this.data.form.responsible
+      "form.projectId": projectId
     });
+    await this.applyTaskSelection(taskIndex, tasks);
   },
 
   async onProjectChange(event) {
@@ -78,14 +76,32 @@ Page({
     await this.loadTasks(projectId, "");
   },
 
-  onTaskChange(event) {
+  async onTaskChange(event) {
     const taskIndex = Number(event.detail.value);
-    const task = this.data.tasks[taskIndex] || {};
+    await this.applyTaskSelection(taskIndex);
+  },
+
+  async applyTaskSelection(taskIndex, sourceTasks) {
+    const tasks = sourceTasks || this.data.tasks;
+    const task = tasks[taskIndex] || {};
+    let latest = { plannedProgress: 0, actualProgress: 0 };
+    if (task.id) latest = await this.loadLatestProgress(task.id);
     this.setData({
       taskIndex,
       "form.taskId": task.id || "",
-      "form.responsible": task.responsible || ""
+      "form.responsible": task.responsible || "",
+      "form.plannedProgress": latest.plannedProgress,
+      "form.actualProgress": latest.actualProgress
     });
+  },
+
+  async loadLatestProgress(taskId) {
+    const rows = (await supabase.select("task_progress_entries", {
+      task_id: supabase.eq(taskId),
+      order: "entry_date.desc",
+      limit: 1
+    })).map(models.toProgress);
+    return rows[0] || { plannedProgress: 0, actualProgress: 0 };
   },
 
   onDateChange(event) {

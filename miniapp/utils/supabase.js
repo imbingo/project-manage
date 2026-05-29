@@ -19,16 +19,37 @@ function getSession() {
 }
 
 function saveSession(session) {
-  wx.setStorageSync(SESSION_KEY, session);
+  if (!session) return;
+  const normalized = Object.assign({}, session);
+  if (!normalized.expires_at && normalized.expires_in) {
+    normalized.expires_at = Math.floor(Date.now() / 1000) + Number(normalized.expires_in);
+  }
+  wx.setStorageSync(SESSION_KEY, normalized);
 }
 
 function clearSession() {
   wx.removeStorageSync(SESSION_KEY);
 }
 
-function request(options) {
-  assertConfig();
+function shouldRefresh(session) {
+  if (!session?.refresh_token || !session.expires_at) return false;
+  return Number(session.expires_at) - Math.floor(Date.now() / 1000) < 60;
+}
+
+async function refreshSession() {
   const session = getSession();
+  if (!session?.refresh_token) throw new Error("登录状态已失效，请重新登录。");
+  const data = await request({
+    path: "/auth/v1/token?grant_type=refresh_token",
+    method: "POST",
+    auth: false,
+    data: { refresh_token: session.refresh_token }
+  });
+  saveSession(data);
+  return data;
+}
+
+function sendRequest(options, session) {
   const headers = Object.assign({
     apikey: CONFIG.supabaseAnonKey,
     "Content-Type": "application/json"
@@ -51,13 +72,39 @@ function request(options) {
           return;
         }
         const message = response.data?.msg || response.data?.message || response.data?.error_description || `请求失败：${response.statusCode}`;
-        reject(new Error(message));
+        const error = new Error(message);
+        error.statusCode = response.statusCode;
+        reject(error);
       },
       fail(error) {
         reject(new Error(error.errMsg || "网络请求失败"));
       }
     });
   });
+}
+
+async function request(options) {
+  assertConfig();
+  const needsAuth = options.auth !== false;
+  let session = getSession();
+  if (needsAuth && shouldRefresh(session)) {
+    try {
+      session = await refreshSession();
+    } catch (error) {
+      clearSession();
+      throw error;
+    }
+  }
+
+  try {
+    return await sendRequest(options, session);
+  } catch (error) {
+    if (needsAuth && !options._retry && error.statusCode === 401 && getSession()?.refresh_token) {
+      await refreshSession();
+      return request(Object.assign({}, options, { _retry: true }));
+    }
+    throw error;
+  }
 }
 
 function buildQuery(params) {
@@ -137,6 +184,7 @@ module.exports = {
   select,
   signInWithPassword,
   signOut,
+  refreshSession,
   update,
   upsert
 };
