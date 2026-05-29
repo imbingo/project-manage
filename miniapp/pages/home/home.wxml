@@ -39,6 +39,7 @@
           <view class="task-title">{{item.title}}</view>
           <view class="muted">{{item.responsible}} · {{item.status}} · {{item.actualProgress}}%</view>
         </view>
+        <button class="btn warn task-action" catchtap="openDailyForTask" data-id="{{item.id}}">日报</button>
       </view>
     </block>
     <view wx:else class="empty">当前项目暂无未完成任务。</view>

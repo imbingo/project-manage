@@ -124,5 +124,9 @@ Page({
 
   editTask(event) {
     wx.navigateTo({ url: `/pages/task-form/task-form?projectId=${this.data.projectId}&taskId=${event.currentTarget.dataset.id}` });
+  },
+
+  openDailyForTask(event) {
+    wx.navigateTo({ url: `/pages/daily-form/daily-form?projectId=${this.data.projectId}&taskId=${event.currentTarget.dataset.id}` });
   }
 });

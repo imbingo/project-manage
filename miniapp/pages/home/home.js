@@ -96,6 +96,11 @@ Page({
     wx.navigateTo({ url: `/pages/daily-form/daily-form?projectId=${this.data.currentProject.id}` });
   },
 
+  openDailyForTask(event) {
+    if (!this.data.currentProject.id) return;
+    wx.navigateTo({ url: `/pages/daily-form/daily-form?projectId=${this.data.currentProject.id}&taskId=${event.currentTarget.dataset.id}` });
+  },
+
   async logout() {
     try {
       await supabase.signOut();

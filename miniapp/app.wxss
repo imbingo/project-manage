@@ -70,6 +70,15 @@ page {
   background: #bf5d35;
 }
 
+.task-action {
+  min-width: 104rpx;
+  min-height: 64rpx;
+  padding: 0 16rpx;
+  border-radius: 10rpx;
+  font-size: 24rpx;
+  line-height: 64rpx;
+}
+
 .input,
 .textarea,
 .picker {
