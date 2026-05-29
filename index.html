@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Project Desk</title>
-    <link rel="stylesheet" href="styles.css?v=20260528-delete-project" />
+    <link rel="stylesheet" href="styles.css?v=20260528-gantt-date-picker" />
   </head>
   <body>
     <main id="accessGate" class="access-gate">
@@ -183,7 +183,7 @@
               <h2>甘特图</h2>
               <p>点击日期查看当天计划与实际。</p>
             </div>
-            <div class="selected-date-badge" id="selectedDateBadge">当前查看：-</div>
+            <button class="selected-date-badge" id="selectedDateBadge" type="button" aria-label="选择甘特图查看日期">当前查看：-</button>
           </div>
           <div class="gantt-shell">
             <div id="ganttHeader" class="gantt-header"></div>
@@ -233,6 +233,21 @@
         </div>
       </section>
     </div>
+
+    <dialog id="datePickerModal">
+      <form class="modal-form" id="datePickerForm">
+        <div class="modal-head">
+          <h3>选择查看日期</h3>
+          <button type="button" class="icon-button" data-close="datePickerModal" aria-label="关闭">×</button>
+        </div>
+        <p class="modal-note">选择任意日期后，甘特图会自动扩展到该日期，方便往前或往后查看更多天数。</p>
+        <label>查看日期 <input id="datePickerInput" type="date" required /></label>
+        <div class="form-actions">
+          <button type="button" class="ghost-button" data-close="datePickerModal">取消</button>
+          <button class="primary-button" type="submit">切换日期</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="projectModal">
       <form class="modal-form" id="projectForm">
@@ -377,8 +392,8 @@
     </dialog>
 
     <datalist id="ownerSuggestions"></datalist>
-    <script src="config.js?v=20260528-delete-project"></script>
+    <script src="config.js?v=20260528-gantt-date-picker"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script defer src="app.js?v=20260528-delete-project"></script>
+    <script defer src="app.js?v=20260528-gantt-date-picker"></script>
   </body>
 </html>
