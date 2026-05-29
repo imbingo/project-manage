@@ -33,9 +33,26 @@ All tables use Supabase Row Level Security. Authenticated users can CRUD only ro
 - Export supports complete project JSON and task CSV.
 - Mobile layout suppresses dense grids and presents outstanding tasks plus quick daily entry.
 
+## WeChat Mini Program MVP
+
+- Source lives in `miniapp/` and uses native WeChat Mini Program pages, not browser APIs.
+- Runtime configuration is copied from `miniapp/config.example.js` to ignored `miniapp/config.js`.
+- Supabase access is through `wx.request` in `miniapp/utils/supabase.js`; no `supabase-js` dependency is used.
+- Data mapping between camelCase and Supabase snake_case lives in `miniapp/utils/models.js`.
+- The miniapp shares `projects`, `tasks`, `task_progress_entries`, and `daily_logs` with the web app.
+- MVP pages:
+  - `pages/login`: Supabase email/password login.
+  - `pages/home`: mobile-first today view, project selector, open/overdue tasks, quick daily entry.
+  - `pages/project-detail`: overview, project create/edit, task list.
+  - `pages/task-form`: task create/edit with parent task, risk, owner, dates, status, note, and initial progress.
+  - `pages/daily-form`: daily log submission plus progress upsert and task status update.
+- Public sharing remains web-only through `?share=slug` for now.
+
 ## Technical Follow-Ups Worth Considering
 
 - Import JSON backups through the UI.
 - Add optimistic concurrency/version checks if several people will edit the same project.
 - Add collaborators and role-based project membership; current ownership is single-user.
 - Add automated browser tests for auth-free public snapshot rendering and local preview forms.
+- Add WeChat openid login through a server-side function or trusted backend.
+- Add project deletion, public share rendering, and compact Gantt/roadmap views to the miniapp after MVP validation.

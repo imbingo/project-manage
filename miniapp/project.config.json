@@ -1,0 +1,13 @@
+{
+  "description": "Project Desk WeChat Mini Program MVP",
+  "appid": "touristappid",
+  "projectname": "project-desk-miniapp",
+  "miniprogramRoot": "./",
+  "compileType": "miniprogram",
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "postcss": true,
+    "minified": true
+  }
+}

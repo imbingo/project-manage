@@ -1,0 +1,66 @@
+<view class="page">
+  <form bindsubmit="saveDaily" class="card stack">
+    <view class="title">填写日报</view>
+
+    <view>
+      <view class="field-label">项目</view>
+      <picker mode="selector" range="{{projectNames}}" value="{{projectIndex}}" bindchange="onProjectChange">
+        <view class="picker">{{projectNames[projectIndex] || "请选择项目"}}</view>
+      </picker>
+    </view>
+
+    <view>
+      <view class="field-label">任务</view>
+      <picker mode="selector" range="{{taskNames}}" value="{{taskIndex}}" bindchange="onTaskChange">
+        <view class="picker">{{taskNames[taskIndex] || "请选择任务"}}</view>
+      </picker>
+    </view>
+
+    <view>
+      <view class="field-label">日期</view>
+      <picker mode="date" value="{{form.date}}" bindchange="onDateChange">
+        <view class="picker">{{form.date}}</view>
+      </picker>
+    </view>
+
+    <view>
+      <view class="field-label">负责人</view>
+      <input class="input" name="responsible" value="{{form.responsible}}" placeholder="负责人" />
+    </view>
+
+    <view>
+      <view class="field-label">计划完成</view>
+      <input class="input" name="planText" value="{{form.planText}}" placeholder="今天计划完成什么" />
+    </view>
+
+    <view>
+      <view class="field-label">实际完成</view>
+      <input class="input" name="actualText" value="{{form.actualText}}" placeholder="今天实际完成什么" />
+    </view>
+
+    <view class="grid-two">
+      <view>
+        <view class="field-label">计划进度%</view>
+        <input class="input" name="plannedProgress" type="number" value="{{form.plannedProgress}}" />
+      </view>
+      <view>
+        <view class="field-label">实际进度%</view>
+        <input class="input" name="actualProgress" type="number" value="{{form.actualProgress}}" />
+      </view>
+    </view>
+
+    <view>
+      <view class="field-label">结果</view>
+      <picker mode="selector" range="{{resultList}}" value="{{resultIndex}}" bindchange="onResultChange">
+        <view class="picker">{{resultList[resultIndex]}}</view>
+      </picker>
+    </view>
+
+    <view>
+      <view class="field-label">延期原因</view>
+      <textarea class="textarea" name="delayReason" value="{{form.delayReason}}" placeholder="如果延期，必须填写原因" />
+    </view>
+
+    <button class="btn warn" form-type="submit" loading="{{saving}}">保存日报</button>
+  </form>
+</view>

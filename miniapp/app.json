@@ -1,0 +1,17 @@
+{
+  "pages": [
+    "pages/login/login",
+    "pages/home/home",
+    "pages/project-detail/project-detail",
+    "pages/task-form/task-form",
+    "pages/daily-form/daily-form"
+  ],
+  "window": {
+    "navigationBarTitleText": "Project Desk",
+    "navigationBarBackgroundColor": "#15584d",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f4f1ea"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

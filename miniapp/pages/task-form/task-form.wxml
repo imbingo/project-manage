@@ -1,0 +1,73 @@
+<view class="page">
+  <form bindsubmit="saveTask" class="card stack">
+    <view class="title">{{taskId ? "编辑任务" : "新增任务"}}</view>
+
+    <view>
+      <view class="field-label">父任务</view>
+      <picker mode="selector" range="{{parentNames}}" value="{{parentIndex}}" bindchange="onParentChange">
+        <view class="picker">{{parentNames[parentIndex]}}</view>
+      </picker>
+    </view>
+
+    <view>
+      <view class="field-label">风险等级</view>
+      <picker mode="selector" range="{{riskList}}" value="{{riskIndex}}" bindchange="onRiskChange">
+        <view class="picker">{{riskList[riskIndex]}}</view>
+      </picker>
+    </view>
+
+    <view>
+      <view class="field-label">任务名称</view>
+      <input class="input" name="title" value="{{form.title}}" placeholder="请输入任务名称" />
+    </view>
+
+    <view>
+      <view class="field-label">负责人</view>
+      <input class="input" name="responsible" value="{{form.responsible}}" placeholder="负责人" />
+    </view>
+
+    <view>
+      <view class="field-label">开始日期</view>
+      <picker mode="date" value="{{form.startDate}}" bindchange="onStartDateChange">
+        <view class="picker">{{form.startDate}}</view>
+      </picker>
+    </view>
+
+    <view>
+      <view class="field-label">工期（天）</view>
+      <input class="input" name="duration" type="number" value="{{form.duration}}" />
+    </view>
+
+    <view>
+      <view class="field-label">状态</view>
+      <picker mode="selector" range="{{statusList}}" value="{{statusIndex}}" bindchange="onStatusChange">
+        <view class="picker">{{statusList[statusIndex]}}</view>
+      </picker>
+    </view>
+
+    <view>
+      <view class="field-label">实际完成日</view>
+      <picker mode="date" value="{{form.completedDate}}" bindchange="onCompletedDateChange">
+        <view class="picker">{{form.completedDate || "未完成"}}</view>
+      </picker>
+    </view>
+
+    <view class="grid-two">
+      <view>
+        <view class="field-label">计划进度%</view>
+        <input class="input" name="plannedProgress" type="number" value="{{form.plannedProgress}}" />
+      </view>
+      <view>
+        <view class="field-label">实际进度%</view>
+        <input class="input" name="actualProgress" type="number" value="{{form.actualProgress}}" />
+      </view>
+    </view>
+
+    <view>
+      <view class="field-label">备注</view>
+      <textarea class="textarea" name="note" value="{{form.note}}" placeholder="任务备注" />
+    </view>
+
+    <button class="btn" form-type="submit" loading="{{saving}}">保存任务</button>
+  </form>
+</view>

@@ -1,0 +1,20 @@
+<view class="page login-page">
+  <view class="card hero">
+    <view class="eyebrow">Project Desk</view>
+    <view class="title">登录项目工作台</view>
+    <view class="muted">使用和网页版相同的 Supabase 邮箱账号登录。</view>
+  </view>
+
+  <view class="card stack">
+    <view>
+      <view class="field-label">邮箱</view>
+      <input class="input" type="text" value="{{email}}" bindinput="onEmailInput" placeholder="name@example.com" />
+    </view>
+    <view>
+      <view class="field-label">密码</view>
+      <input class="input" password value="{{password}}" bindinput="onPasswordInput" placeholder="至少 6 位" />
+    </view>
+    <button class="btn" loading="{{loading}}" bindtap="login">登录</button>
+    <view class="muted">暂不支持微信 openid 登录；后续可通过服务端云函数扩展。</view>
+  </view>
+</view>

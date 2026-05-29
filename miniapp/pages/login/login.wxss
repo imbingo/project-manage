@@ -1,0 +1,16 @@
+.login-page {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.hero {
+  gap: 10rpx;
+}
+
+.eyebrow {
+  color: #15584d;
+  font-size: 22rpx;
+  font-weight: 800;
+  text-transform: uppercase;
+}

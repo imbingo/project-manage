@@ -1,0 +1,28 @@
+.compact {
+  min-width: 140rpx;
+  padding: 0 18rpx;
+}
+
+.metric-value.small {
+  font-size: 30rpx;
+}
+
+.task-row {
+  display: flex;
+  gap: 18rpx;
+  padding: 18rpx 0;
+  border-bottom: 1rpx solid #e7dece;
+}
+
+.task-row:last-child {
+  border-bottom: 0;
+}
+
+.task-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-title {
+  font-weight: 800;
+}

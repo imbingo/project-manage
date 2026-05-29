@@ -65,6 +65,14 @@ window.PROJECT_DESK_CONFIG = {
 
 公开页面不展示日报、延期原因、任务备注或子任务细节。
 
+## 微信小程序版本
+
+仓库新增 [miniapp/](./miniapp) 原生微信小程序 MVP，和网页版共用 Supabase Auth 与关系表数据。
+
+当前小程序聚焦手机端高频流程：邮箱登录、今日任务、项目列表、项目详情、新增/编辑项目、新增/编辑任务、填写日报。小程序不实现网页版甘特图和公开分享页；公开链接仍由网页版 `?share=slug` 提供。
+
+运行前需要复制 [miniapp/config.example.js](./miniapp/config.example.js) 为 `miniapp/config.js`，填入 Supabase 公开 `publishable/anon` key，并在微信小程序后台配置 Supabase request 合法域名。`miniapp/config.js` 已加入 `.gitignore`，不要提交真实配置或任何高权限密钥。
+
 ## 部署
 
 仓库已配置 GitHub Pages 工作流：[.github/workflows/deploy-pages.yml](./.github/workflows/deploy-pages.yml)。
@@ -86,4 +94,5 @@ python -m http.server 8080
 - [app.js](./app.js)：登录、关系数据读写、迁移、公开页、导出和交互
 - [config.js](./config.js)：线上公开配置
 - [supabase/schema.sql](./supabase/schema.sql)：数据库升级和权限脚本
+- [miniapp/](./miniapp)：微信小程序 MVP
 - [HANDOFF.md](./HANDOFF.md)：后续继续开发说明

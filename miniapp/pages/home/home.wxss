@@ -1,0 +1,42 @@
+.actions {
+  align-items: stretch;
+}
+
+.compact {
+  min-width: 140rpx;
+  padding: 0 18rpx;
+}
+
+.task-row,
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  padding: 18rpx 0;
+  border-bottom: 1rpx solid #e7dece;
+}
+
+.task-row:last-child,
+.project-row:last-child {
+  border-bottom: 0;
+}
+
+.task-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-title,
+.project-name {
+  font-weight: 800;
+}
+
+.project-row {
+  justify-content: space-between;
+}
+
+.project-progress {
+  min-width: 120rpx;
+  text-align: right;
+  font-weight: 800;
+}

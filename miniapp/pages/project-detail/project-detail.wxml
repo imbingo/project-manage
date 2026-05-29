@@ -1,0 +1,84 @@
+<view class="page">
+  <block wx:if="{{isEditing}}">
+    <form bindsubmit="saveProject" class="card stack">
+      <view class="title">{{isCreate ? "新增项目" : "编辑项目"}}</view>
+      <view>
+        <view class="field-label">项目名称</view>
+        <input class="input" name="name" value="{{form.name}}" placeholder="请输入项目名称" />
+      </view>
+      <view>
+        <view class="field-label">Deadline</view>
+        <picker mode="date" value="{{form.deadline}}" bindchange="onDeadlineChange">
+          <view class="picker">{{form.deadline || "选择日期"}}</view>
+        </picker>
+      </view>
+      <view>
+        <view class="field-label">一句话总结</view>
+        <input class="input" name="summary" value="{{form.summary}}" placeholder="项目当前最重要的状态" />
+      </view>
+      <view>
+        <view class="field-label">TOP 风险</view>
+        <textarea class="textarea" name="topRisk" value="{{form.topRisk}}" placeholder="领导最关心的风险" />
+      </view>
+      <view>
+        <view class="field-label">下一步计划</view>
+        <textarea class="textarea" name="nextStep" value="{{form.nextStep}}" placeholder="下一步要推进的动作" />
+      </view>
+      <view class="row">
+        <button class="btn secondary" bindtap="cancelEdit">取消</button>
+        <button class="btn" form-type="submit" loading="{{saving}}">保存项目</button>
+      </view>
+    </form>
+  </block>
+
+  <block wx:else>
+    <view class="card stack">
+      <view class="row">
+        <view>
+          <view class="title">{{project.name}}</view>
+          <view class="muted">{{project.summary}}</view>
+        </view>
+        <button class="btn secondary compact" bindtap="editProject">编辑</button>
+      </view>
+      <view class="metric-grid">
+        <view class="metric">
+          <view class="muted">Deadline</view>
+          <view class="metric-value small">{{project.deadline}}</view>
+          <view class="{{project.isLate ? 'danger-text' : 'muted'}}">{{project.remainingText}}</view>
+        </view>
+        <view class="metric">
+          <view class="muted">进度</view>
+          <view class="metric-value">{{project.actualProgress}}%</view>
+          <view class="muted">计划 {{project.plannedProgress}}%</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="card stack">
+      <view>
+        <view class="section-title">TOP 风险</view>
+        <view class="muted">{{project.topRisk || "暂无"}}</view>
+      </view>
+      <view>
+        <view class="section-title">下一步计划</view>
+        <view class="muted">{{project.nextStep || "暂无"}}</view>
+      </view>
+    </view>
+
+    <view class="card stack">
+      <view class="row">
+        <view class="section-title">任务列表</view>
+        <button class="btn compact" bindtap="createTask">新增任务</button>
+      </view>
+      <view class="task-row" wx:for="{{tasks}}" wx:key="id" bindtap="editTask" data-id="{{item.id}}">
+        <view class="risk {{item.risk}}">{{item.risk}}</view>
+        <view class="task-main">
+          <view class="task-title">{{item.title}}</view>
+          <view class="muted">{{item.responsible}} · {{item.startDate}} · {{item.duration}}天 · {{item.status}}</view>
+          <view class="{{item.isOverdue ? 'danger-text' : 'muted'}}">计划 {{item.plannedProgress}}% / 实际 {{item.actualProgress}}%</view>
+        </view>
+      </view>
+      <view wx:if="{{!tasks.length}}" class="empty">暂无任务。</view>
+    </view>
+  </block>
+</view>

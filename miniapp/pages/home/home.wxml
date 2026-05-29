@@ -1,0 +1,61 @@
+<view class="page">
+  <view class="card stack">
+    <view class="row">
+      <view>
+        <view class="title">今日处理</view>
+        <view class="muted">{{today}}</view>
+      </view>
+      <button class="btn secondary compact" bindtap="logout">退出</button>
+    </view>
+    <picker mode="selector" range="{{projectNames}}" value="{{selectedProjectIndex}}" bindchange="onProjectChange">
+      <view class="picker">当前项目：{{currentProject.name || "暂无项目"}}</view>
+    </picker>
+    <view class="row actions">
+      <button class="btn secondary" bindtap="createProject">新增项目</button>
+      <button class="btn" bindtap="openCurrentProject" disabled="{{!currentProject.id}}">项目详情</button>
+    </view>
+  </view>
+
+  <view class="metric-grid">
+    <view class="metric">
+      <view class="muted">未完成任务</view>
+      <view class="metric-value">{{openTasks.length}}</view>
+    </view>
+    <view class="metric">
+      <view class="muted">逾期任务</view>
+      <view class="metric-value danger-text">{{overdueTasks.length}}</view>
+    </view>
+  </view>
+
+  <view class="card stack">
+    <view class="row">
+      <view class="section-title">快速日报</view>
+      <button class="btn warn compact" bindtap="openDailyForm" disabled="{{!currentProject.id}}">填日报</button>
+    </view>
+    <block wx:if="{{openTasks.length}}">
+      <view class="task-row" wx:for="{{openTasks}}" wx:key="id" bindtap="openTask" data-id="{{item.id}}">
+        <view class="risk {{item.risk}}">{{item.risk}}</view>
+        <view class="task-main">
+          <view class="task-title">{{item.title}}</view>
+          <view class="muted">{{item.responsible}} · {{item.status}} · {{item.actualProgress}}%</view>
+        </view>
+      </view>
+    </block>
+    <view wx:else class="empty">当前项目暂无未完成任务。</view>
+  </view>
+
+  <view class="card stack">
+    <view class="section-title">项目列表</view>
+    <view class="project-row" wx:for="{{projects}}" wx:key="id" bindtap="openProject" data-id="{{item.id}}">
+      <view>
+        <view class="project-name">{{item.name}}</view>
+        <view class="muted">{{item.deadline}} · {{item.summary}}</view>
+      </view>
+      <view class="project-progress">
+        <view>{{item.actualProgress}}%</view>
+        <view class="muted">计划 {{item.plannedProgress}}%</view>
+      </view>
+    </view>
+    <view wx:if="{{!projects.length}}" class="empty">暂无项目，请先新增项目。</view>
+  </view>
+</view>
