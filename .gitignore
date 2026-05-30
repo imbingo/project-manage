@@ -2,3 +2,5 @@
 Thumbs.db
 *.log
 miniapp/config.js
+.wechat-upload/
+*.key
