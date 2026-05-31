@@ -9,8 +9,9 @@
 
 .task-row {
   display: flex;
-  gap: 18rpx;
-  padding: 18rpx 0;
+  align-items: center;
+  gap: 16rpx;
+  padding: 20rpx 0;
   border-bottom: 1rpx solid #e7dece;
 }
 
@@ -25,4 +26,7 @@
 
 .task-title {
   font-weight: 800;
+  margin-bottom: 4rpx;
+  line-height: 1.35;
+  word-break: break-all;
 }

@@ -11,8 +11,8 @@
 .project-row {
   display: flex;
   align-items: center;
-  gap: 18rpx;
-  padding: 18rpx 0;
+  gap: 16rpx;
+  padding: 20rpx 0;
   border-bottom: 1rpx solid #e7dece;
 }
 
@@ -29,6 +29,12 @@
 .task-title,
 .project-name {
   font-weight: 800;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.task-title {
+  margin-bottom: 4rpx;
 }
 
 .project-row {

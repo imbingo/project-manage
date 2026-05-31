@@ -50,7 +50,26 @@ page {
   gap: 18rpx;
 }
 
+button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-sizing: border-box;
+  color: inherit;
+  font: inherit;
+  line-height: normal;
+}
+
+button::after {
+  border: 0;
+}
+
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 78rpx;
   padding: 0 28rpx;
   border-radius: 12rpx;
@@ -70,13 +89,20 @@ page {
   background: #bf5d35;
 }
 
+.btn[disabled] {
+  opacity: 0.48;
+}
+
 .task-action {
-  min-width: 104rpx;
-  min-height: 64rpx;
-  padding: 0 16rpx;
-  border-radius: 10rpx;
-  font-size: 24rpx;
-  line-height: 64rpx;
+  flex: 0 0 auto;
+  width: 92rpx;
+  min-width: 92rpx;
+  min-height: 54rpx;
+  padding: 0;
+  border-radius: 999rpx;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 54rpx;
 }
 
 .input,
