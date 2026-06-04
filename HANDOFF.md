@@ -56,7 +56,7 @@ All tables use Supabase Row Level Security. Authenticated users can CRUD only ro
 - Non-GUI compatibility logic lives in `local_desktop/src/import_export.py`.
 - The desktop app imports web workspace JSON, single-project JSON, Supabase legacy payloads, wrapped `data/workspace/payload` exports, and old localStorage keys.
 - Excel export writes `.xlsx` with project overview, task ledger, daily logs, and a Gantt timeline.
-- The first desktop UI focuses on reading, importing, backup/export, and dashboard-style review. Full create/edit dialogs are still a follow-up.
+- The desktop UI now covers project create/edit/delete, task create/edit/delete, daily-log create/edit/delete, JSON import/export, CSV export, and Excel export. Inline table editing remains a follow-up.
 
 ## Technical Follow-Ups Worth Considering
 
