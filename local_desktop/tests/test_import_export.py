@@ -7,7 +7,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.import_export import export_project_excel, normalize_workspace
+from src.import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json, normalize_workspace
 from src.models import DailyLog, ProgressEntry, Project, Task, Workspace
 
 
@@ -110,3 +110,19 @@ def test_export_excel(tmp_path):
     export_project_excel(project, path)
     assert path.exists()
     assert path.stat().st_size > 1000
+
+
+def test_json_and_csv_export_round_trip(tmp_path):
+    task = Task(id="t1", title="任务", responsible="张三", startDate="2026-05-06", duration=4)
+    project = Project(id="p1", name="项目", deadline="2026-05-30", tasks=[task])
+    workspace = Workspace(selectedProjectId="p1", selectedDate="2026-05-06", projects=[project])
+    json_path = tmp_path / "workspace.json"
+    csv_path = tmp_path / "tasks.csv"
+    dump_workspace_json(workspace, json_path)
+    loaded, diagnostics = load_workspace_json(json_path)
+    assert loaded.projects[0].name == "项目"
+    assert diagnostics[0].startswith("识别格式")
+    export_tasks_csv(project, csv_path)
+    content = csv_path.read_text(encoding="utf-8-sig")
+    assert "任务" in content
+    assert "张三" in content

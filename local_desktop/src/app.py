@@ -3,7 +3,6 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
-from uuid import uuid4
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -33,6 +32,18 @@ from PySide6.QtWidgets import (
 from .import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json
 from .metrics import add_days, overdue_count, project_progress, task_end_date
 from .models import DailyLog, ProgressEntry, Project, Task, Workspace, today
+from .operations import (
+    add_project as add_project_to_workspace,
+    add_task as add_task_to_project,
+    delete_daily_log as delete_log_from_project,
+    delete_project as delete_project_from_workspace,
+    delete_task as delete_task_from_project,
+    latest_entry,
+    merge_workspace,
+    save_daily_log,
+    update_project,
+    update_task,
+)
 from .storage import data_dir, load_workspace, save_workspace
 
 
@@ -61,21 +72,6 @@ QHeaderView::section {
   font-weight: 700;
 }
 """
-
-
-def latest_entry(task: Task) -> ProgressEntry:
-    if not task.progressEntries:
-        return ProgressEntry(entryDate=task.startDate, plannedProgress=0, actualProgress=0)
-    return sorted(task.progressEntries, key=lambda item: item.entryDate)[-1]
-
-
-def upsert_progress(task: Task, entry_date: str, planned: int, actual: int) -> None:
-    for entry in task.progressEntries:
-        if entry.entryDate == entry_date:
-            entry.plannedProgress = planned
-            entry.actualProgress = actual
-            return
-    task.progressEntries.append(ProgressEntry(entryDate=entry_date, plannedProgress=planned, actualProgress=actual))
 
 
 class ProjectDialog(QDialog):
@@ -478,10 +474,7 @@ class MainWindow(QMainWindow):
         dialog = ProjectDialog(parent=self)
         if dialog.exec() != QDialog.Accepted:
             return
-        values = dialog.values()
-        project = Project(**values)
-        self.workspace.projects.append(project)
-        self.workspace.selectedProjectId = project.id
+        add_project_to_workspace(self.workspace, dialog.values())
         self.persist()
 
     def edit_project(self) -> None:
@@ -491,22 +484,21 @@ class MainWindow(QMainWindow):
         dialog = ProjectDialog(project, self)
         if dialog.exec() != QDialog.Accepted:
             return
-        for key, value in dialog.values().items():
-            setattr(project, key, value)
+        update_project(project, dialog.values())
         self.persist()
 
     def delete_project(self) -> None:
         project = self.current_project()
         if not project:
             return
-        if len(self.workspace.projects) <= 1:
-            QMessageBox.warning(self, "不能删除", "至少需要保留一个项目。")
-            return
         ok = QMessageBox.question(self, "确认删除", f"删除项目「{project.name}」会同时删除任务和日报，是否继续？")
         if ok != QMessageBox.Yes:
             return
-        self.workspace.projects = [item for item in self.workspace.projects if item.id != project.id]
-        self.workspace.selectedProjectId = self.workspace.projects[0].id
+        try:
+            delete_project_from_workspace(self.workspace, project.id)
+        except ValueError as exc:
+            QMessageBox.warning(self, "不能删除", str(exc))
+            return
         self.persist()
 
     def add_task(self) -> None:
@@ -516,20 +508,7 @@ class MainWindow(QMainWindow):
         dialog = TaskDialog(project, selected_date=self.workspace.selectedDate, parent=self)
         if dialog.exec() != QDialog.Accepted:
             return
-        values = dialog.values()
-        task = Task(
-            parentId=values["parentId"],
-            risk=values["risk"],
-            title=values["title"],
-            responsible=values["responsible"],
-            startDate=values["startDate"],
-            duration=values["duration"],
-            status=values["status"],
-            completedDate=values["completedDate"],
-            note=values["note"],
-        )
-        upsert_progress(task, self.workspace.selectedDate, values["plannedProgress"], values["actualProgress"])
-        project.tasks.append(task)
+        add_task_to_project(project, self.workspace.selectedDate, dialog.values())
         self.persist()
 
     def edit_task(self) -> None:
@@ -541,10 +520,7 @@ class MainWindow(QMainWindow):
         dialog = TaskDialog(project, task, self.workspace.selectedDate, self)
         if dialog.exec() != QDialog.Accepted:
             return
-        values = dialog.values()
-        for key in ["parentId", "risk", "title", "responsible", "startDate", "duration", "status", "completedDate", "note"]:
-            setattr(task, key, values[key])
-        upsert_progress(task, self.workspace.selectedDate, values["plannedProgress"], values["actualProgress"])
+        update_task(task, self.workspace.selectedDate, dialog.values())
         self.persist()
 
     def delete_task(self) -> None:
@@ -556,16 +532,7 @@ class MainWindow(QMainWindow):
         ok = QMessageBox.question(self, "确认删除", f"删除任务「{task.title}」会同时删除它的子任务和相关日报，是否继续？")
         if ok != QMessageBox.Yes:
             return
-        ids = {task.id}
-        changed = True
-        while changed:
-            changed = False
-            for item in project.tasks:
-                if item.parentId in ids and item.id not in ids:
-                    ids.add(item.id)
-                    changed = True
-        project.tasks = [item for item in project.tasks if item.id not in ids]
-        project.dailyLogs = [log for log in project.dailyLogs if log.taskId not in ids]
+        delete_task_from_project(project, task.id)
         self.persist()
 
     def add_daily(self) -> None:
@@ -578,7 +545,7 @@ class MainWindow(QMainWindow):
         dialog = DailyDialog(project, selected_date=self.workspace.selectedDate, parent=self)
         if dialog.exec() != QDialog.Accepted:
             return
-        self._save_log_values(DailyLog(), dialog.values())
+        self._save_log_values(None, dialog.values())
 
     def edit_daily(self) -> None:
         project = self.current_project()
@@ -600,35 +567,18 @@ class MainWindow(QMainWindow):
         ok = QMessageBox.question(self, "确认删除", "删除这条日报会同步移除对应日期的任务进度，是否继续？")
         if ok != QMessageBox.Yes:
             return
-        project.dailyLogs = [item for item in project.dailyLogs if item.id != log.id]
-        task = next((item for item in project.tasks if item.id == log.taskId), None)
-        if task:
-            task.progressEntries = [entry for entry in task.progressEntries if entry.entryDate != log.date]
+        delete_log_from_project(project, log.id)
         self.persist()
 
-    def _save_log_values(self, log: DailyLog, values: dict) -> None:
+    def _save_log_values(self, log: DailyLog | None, values: dict) -> None:
         project = self.current_project()
         if not project:
             return
-        if values["result"] == "延期" and not values["delayReason"]:
-            QMessageBox.warning(self, "缺少延期原因", "日报结果为延期时，必须填写延期原因。")
+        try:
+            save_daily_log(self.workspace, project, log, values)
+        except ValueError as exc:
+            QMessageBox.warning(self, "保存失败", str(exc))
             return
-        is_new = log.id not in {item.id for item in project.dailyLogs}
-        old_task_id = log.taskId
-        old_date = log.date
-        for key, value in values.items():
-            setattr(log, key, value)
-        if is_new:
-            project.dailyLogs.append(log)
-        old_task = next((item for item in project.tasks if item.id == old_task_id), None)
-        if old_task and (old_task_id != log.taskId or old_date != log.date):
-            old_task.progressEntries = [entry for entry in old_task.progressEntries if entry.entryDate != old_date]
-        task = next((item for item in project.tasks if item.id == log.taskId), None)
-        if task:
-            upsert_progress(task, log.date, log.plannedProgress, log.actualProgress)
-            task.status = "Closed" if log.actualProgress == 100 else "Ongoing" if log.actualProgress > 0 else "Open"
-            task.completedDate = log.date if log.actualProgress == 100 else ""
-        self.workspace.selectedDate = log.date
         self.persist()
 
     def import_json(self) -> None:
@@ -643,7 +593,7 @@ class MainWindow(QMainWindow):
             if mode == "replace":
                 self.workspace = workspace
             else:
-                self._merge_workspace(workspace)
+                merge_workspace(self.workspace, workspace)
             save_workspace(self.workspace)
             self.refresh()
             mode_text = "覆盖" if mode == "replace" else "合并"
@@ -669,33 +619,6 @@ class MainWindow(QMainWindow):
         if clicked == replace_button:
             return "replace"
         return "cancel"
-
-    def _merge_workspace(self, incoming: Workspace) -> None:
-        first_new_project_id = None
-        for project in incoming.projects:
-            old_project_id = project.id
-            project.id = str(uuid4())
-            if first_new_project_id is None:
-                first_new_project_id = project.id
-            task_ids = {}
-            for task in project.tasks:
-                old_task_id = task.id
-                task.id = str(uuid4())
-                task_ids[old_task_id] = task.id
-            for task in project.tasks:
-                if task.parentId:
-                    task.parentId = task_ids.get(task.parentId)
-            for log in project.dailyLogs:
-                log.id = str(uuid4())
-                log.taskId = task_ids.get(log.taskId, log.taskId)
-            if project.publicSlug:
-                project.publicSlug = f"{project.publicSlug}-{project.id[:6]}"
-            self.workspace.projects.append(project)
-            if incoming.selectedProjectId == old_project_id:
-                first_new_project_id = project.id
-        if first_new_project_id:
-            self.workspace.selectedProjectId = first_new_project_id
-        self.workspace.selectedDate = incoming.selectedDate or self.workspace.selectedDate
 
     def export_json(self) -> None:
         file_name, _ = QFileDialog.getSaveFileName(self, "导出 JSON 备份", "project-desk-workspace.json", "JSON Files (*.json)")
