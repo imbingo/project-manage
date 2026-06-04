@@ -6,3 +6,7 @@ miniapp/config.js
 *.key
 __pycache__/
 *.pyc
+
+local_desktop/build/
+local_desktop/dist/
+local_desktop/*.spec
