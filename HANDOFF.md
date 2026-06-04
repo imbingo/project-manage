@@ -55,6 +55,7 @@ All tables use Supabase Row Level Security. Authenticated users can CRUD only ro
 - Runtime is Python + PySide6; data is local JSON under `%APPDATA%/ProjectDeskLocal/workspace.json`.
 - Non-GUI compatibility logic lives in `local_desktop/src/import_export.py`.
 - Non-GUI CRUD and progress write-back logic lives in `local_desktop/src/operations.py` and is covered by pytest.
+- GUI-level workflow tests in `local_desktop/tests/test_ui_workflows.py` exercise main-window project/task/daily CRUD plus JSON import and JSON/CSV/Excel export actions using PySide in offscreen mode.
 - The desktop app imports web workspace JSON, single-project JSON, Supabase legacy payloads, wrapped `data/workspace/payload` exports, and old localStorage keys.
 - Excel export writes `.xlsx` with project overview, task ledger, daily logs, and a Gantt timeline.
 - The desktop UI now covers project create/edit/delete, task create/edit/delete, daily-log create/edit/delete, JSON import/export, CSV export, and Excel export. Inline table editing remains a follow-up.
