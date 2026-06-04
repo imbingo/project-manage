@@ -20,5 +20,7 @@ def test_main_window_initializes(tmp_path, monkeypatch):
     window = MainWindow()
     assert window.windowTitle() == "Project Desk Local"
     assert window.project_select.count() >= 1
+    assert window.gantt.rows
+    assert window.gantt.dates
     window.close()
     app.quit()
