@@ -85,6 +85,7 @@ let appMode = "boot";
 let cloudClient = null;
 let session = null;
 let recoveryMode = false;
+let pendingImport = null;
 
 function config() {
   return window.PROJECT_DESK_CONFIG || {};
@@ -275,6 +276,119 @@ function normalizeLegacyPayload(payload) {
     selectedProjectId: payload.selectedProjectId || projects[0].id,
     selectedDate: payload.selectedDate || dateString(),
     projects
+  };
+}
+
+function clampProgress(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function safeDate(value, fallback = dateString()) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) ? String(value) : fallback;
+}
+
+function pick(source, ...keys) {
+  for (const key of keys) {
+    if (source && source[key] !== undefined && source[key] !== null) return source[key];
+  }
+  return undefined;
+}
+
+function unwrapImportPayload(raw) {
+  for (const key of [LOCAL_PREVIEW_KEY, ...LEGACY_LOCAL_KEYS]) {
+    if (raw?.[key]) {
+      const value = typeof raw[key] === "string" ? JSON.parse(raw[key]) : raw[key];
+      return { payload: value, format: `localStorage ${key}` };
+    }
+  }
+  if (raw?.payload) return { payload: raw.payload, format: "Supabase legacy payload" };
+  if (raw?.data) return { payload: raw.data, format: "Wrapped data" };
+  if (raw?.workspace) return { payload: raw.workspace, format: "Wrapped workspace" };
+  if (raw?.projects) return { payload: raw, format: "Workspace projects" };
+  if (raw?.tasks || raw?.dailyLogs || raw?.daily_logs) return { payload: { projects: [raw] }, format: "Single project" };
+  return { payload: raw, format: "Unknown" };
+}
+
+function normalizeImportedWorkspace(raw) {
+  const unwrapped = unwrapImportPayload(raw);
+  const source = unwrapped.payload || {};
+  const sourceProjects = Array.isArray(source.projects) ? source.projects : [];
+  if (!sourceProjects.length) throw new Error("没有识别到 projects，也没有识别到单项目结构。");
+  const diagnostics = [];
+  const projects = sourceProjects.map((project, projectIndex) => {
+    const projectId = String(pick(project, "id") || crypto.randomUUID());
+    const tasks = (pick(project, "tasks") || []).map((task) => {
+      const duration = Math.max(1, Number.parseInt(pick(task, "duration"), 10) || 1);
+      const risk = ["H", "M", "L"].includes(pick(task, "risk")) ? pick(task, "risk") : "M";
+      const status = ["Open", "Ongoing", "Closed"].includes(pick(task, "status")) ? pick(task, "status") : "Open";
+      const entries = pick(task, "progressEntries", "progress_entries") || [];
+      const normalizedEntries = Array.isArray(entries) ? entries.map((entry) => ({
+        entryDate: safeDate(pick(entry, "entryDate", "entry_date"), safeDate(source.selectedDate)),
+        plannedProgress: clampProgress(pick(entry, "plannedProgress", "planned_progress")),
+        actualProgress: clampProgress(pick(entry, "actualProgress", "actual_progress"))
+      })) : [];
+      if (!normalizedEntries.length && (task.plannedProgress !== undefined || task.actualProgress !== undefined)) {
+        normalizedEntries.push({
+          entryDate: safeDate(source.selectedDate),
+          plannedProgress: clampProgress(task.plannedProgress),
+          actualProgress: clampProgress(task.actualProgress)
+        });
+      }
+      return {
+        id: String(pick(task, "id") || crypto.randomUUID()),
+        parentId: pick(task, "parentId", "parent_id") || null,
+        risk,
+        title: String(pick(task, "title", "task", "name") || "未命名任务"),
+        responsible: String(pick(task, "responsible", "owner") || ""),
+        startDate: safeDate(pick(task, "startDate", "start_date")),
+        duration,
+        status,
+        completedDate: safeDate(pick(task, "completedDate", "completed_date"), "") || "",
+        note: String(pick(task, "note", "remark") || ""),
+        progressEntries: normalizedEntries
+      };
+    });
+    const taskIds = new Set(tasks.map((task) => String(task.id)));
+    const logs = (pick(project, "dailyLogs", "daily_logs") || []).map((log) => {
+      const result = String(pick(log, "result") || "部分完成");
+      const delayReason = String(pick(log, "delayReason", "delay_reason") || "");
+      if (result === "延期" && !delayReason) diagnostics.push(`项目 ${projectIndex + 1} 有延期日报缺少原因，已导入为空，后续保存时需要补充。`);
+      return {
+        id: String(pick(log, "id") || crypto.randomUUID()),
+        date: safeDate(pick(log, "date", "log_date", "entry_date")),
+        responsible: String(pick(log, "responsible", "owner") || ""),
+        taskId: String(pick(log, "taskId", "task_id") || ""),
+        planText: String(pick(log, "planText", "plan_text") || ""),
+        actualText: String(pick(log, "actualText", "actual_text") || ""),
+        plannedProgress: clampProgress(pick(log, "plannedProgress", "planned_progress")),
+        actualProgress: clampProgress(pick(log, "actualProgress", "actual_progress", "progressAfter")),
+        result,
+        delayReason
+      };
+    }).filter((log) => taskIds.has(String(log.taskId)));
+    return {
+      id: projectId,
+      name: String(pick(project, "name", "title") || "未命名项目"),
+      deadline: safeDate(pick(project, "deadline")),
+      summary: String(pick(project, "summary") || ""),
+      topRisk: String(pick(project, "topRisk", "top_risk") || ""),
+      nextStep: String(pick(project, "nextStep", "next_step") || ""),
+      isPublic: Boolean(pick(project, "isPublic", "is_public")),
+      publicSlug: String(pick(project, "publicSlug", "public_slug") || ""),
+      tasks,
+      dailyLogs: logs
+    };
+  });
+  return {
+    workspace: {
+      selectedProjectId: source.selectedProjectId || source.selected_project_id || projects[0].id,
+      selectedDate: safeDate(source.selectedDate || source.selected_date),
+      projects
+    },
+    format: unwrapped.format,
+    diagnostics
   };
 }
 
@@ -473,6 +587,76 @@ async function migratePayloadToCloud(payload) {
       if (taskId) await insertDailyLog(project.id, taskId, sourceLog);
     }
   }
+}
+
+function remapWorkspaceIds(workspace) {
+  const projectIds = new Map();
+  const taskIds = new Map();
+  return {
+    selectedProjectId: null,
+    selectedDate: workspace.selectedDate || dateString(),
+    projects: workspace.projects.map((project) => {
+      const newProjectId = crypto.randomUUID();
+      projectIds.set(String(project.id), newProjectId);
+      const tasks = project.tasks.map((task) => {
+        const newTaskId = crypto.randomUUID();
+        taskIds.set(String(task.id), newTaskId);
+        return { ...task, id: newTaskId };
+      });
+      tasks.forEach((task, index) => {
+        const oldParentId = project.tasks[index].parentId;
+        task.parentId = oldParentId ? taskIds.get(String(oldParentId)) || null : null;
+      });
+      const dailyLogs = project.dailyLogs.map((log) => ({
+        ...log,
+        id: crypto.randomUUID(),
+        taskId: taskIds.get(String(log.taskId)) || log.taskId
+      }));
+      return {
+        ...project,
+        id: newProjectId,
+        publicSlug: project.publicSlug ? `${project.publicSlug}-${crypto.randomUUID().slice(0, 6)}` : "",
+        tasks,
+        dailyLogs
+      };
+    })
+  };
+}
+
+async function replaceCloudWorkspace(workspace) {
+  const { error } = await cloudClient.from(TABLES.projects).delete().neq("id", "00000000-0000-0000-0000-000000000000");
+  if (error) throw error;
+  await migratePayloadToCloud(workspace);
+  await loadCloudState();
+}
+
+async function mergeCloudWorkspace(workspace) {
+  const remapped = remapWorkspaceIds(workspace);
+  await migratePayloadToCloud(remapped);
+  await loadCloudState();
+}
+
+async function applyImportedWorkspace(mode) {
+  if (!pendingImport?.workspace?.projects?.length) throw new Error("请先选择并预览 JSON 文件。");
+  const workspace = pendingImport.workspace;
+  if (usesDocumentStorage()) {
+    if (mode === "replace") {
+      state = workspace;
+    } else {
+      const remapped = remapWorkspaceIds(workspace);
+      state.projects.push(...remapped.projects);
+      state.selectedProjectId = remapped.projects[0]?.id || state.selectedProjectId;
+      state.selectedDate = workspace.selectedDate || state.selectedDate;
+    }
+    await refreshAfterChange();
+    return;
+  }
+  setSyncStatus("正在导入...", "saving");
+  if (mode === "replace") await replaceCloudWorkspace(workspace);
+  else await mergeCloudWorkspace(workspace);
+  state.selectedProjectId = state.projects[0]?.id || state.selectedProjectId;
+  setSyncStatus("云端已同步", "saved");
+  render();
 }
 
 function persistLocal() {
@@ -984,7 +1168,12 @@ function download(name, type, content) {
 
 function exportJson() {
   const project = currentProject();
-  download(`${project.name}-backup-${dateString()}.json`, "application/json;charset=utf-8", JSON.stringify(project, null, 2));
+  const payload = {
+    version: "project-desk-workspace-v6",
+    exportedAt: new Date().toISOString(),
+    workspace: state
+  };
+  download(`${project.name}-workspace-${dateString()}.json`, "application/json;charset=utf-8", JSON.stringify(payload, null, 2));
 }
 
 function exportCsv() {
@@ -996,6 +1185,99 @@ function exportCsv() {
   });
   const csv = rows.map((row) => row.map((cell) => `"${String(cell || "").replaceAll('"', '""')}"`).join(",")).join("\r\n");
   download(`${project.name}-tasks-${dateString()}.csv`, "text/csv;charset=utf-8", `\ufeff${csv}`);
+}
+
+function ganttDateRange(project) {
+  const starts = project.tasks.map((task) => task.startDate).filter(Boolean);
+  const ends = project.tasks.map((task) => taskEndDate(task)).filter(Boolean);
+  const start = starts.length ? starts.sort()[0] : dateString();
+  const end = ends.length ? ends.sort().at(-1) : addDays(start, 13);
+  const total = Math.min(Math.max(daysBetween(start, end) + 1, 14), 120);
+  return Array.from({ length: total }, (_, index) => addDays(start, index));
+}
+
+function excelCell(value, attrs = "") {
+  return `<td ${attrs}>${escapeHtml(value ?? "")}</td>`;
+}
+
+function excelHeader(value) {
+  return `<th>${escapeHtml(value ?? "")}</th>`;
+}
+
+function exportExcel() {
+  const project = currentProject();
+  const progress = project.tasks.map((task) => latestProgress(task));
+  const dates = ganttDateRange(project);
+  const remaining = daysBetween(dateString(), project.deadline);
+  const taskRows = orderedTasks(project.tasks).map((task) => {
+    const p = latestProgress(task);
+    return `<tr>${[
+      task.risk,
+      `${"　".repeat(task.depth || 0)}${task.title}`,
+      task.responsible,
+      task.startDate,
+      task.duration,
+      taskEndDate(task),
+      task.status,
+      p.plannedProgress,
+      p.actualProgress,
+      task.completedDate,
+      task.note
+    ].map((cell) => excelCell(cell)).join("")}</tr>`;
+  }).join("");
+  const dailyRows = project.dailyLogs.map((log) => {
+    const task = project.tasks.find((item) => String(item.id) === String(log.taskId));
+    return `<tr>${[
+      log.date,
+      log.responsible,
+      task?.title || "",
+      log.planText,
+      log.actualText,
+      log.plannedProgress,
+      log.actualProgress,
+      log.result,
+      log.delayReason
+    ].map((cell) => excelCell(cell)).join("")}</tr>`;
+  }).join("");
+  const ganttRows = orderedTasks(project.tasks).map((task) => {
+    const end = taskEndDate(task);
+    const p = latestProgress(task);
+    const cells = dates.map((date) => {
+      const active = date >= task.startDate && date <= end;
+      const done = task.completedDate && date >= task.startDate && date <= task.completedDate;
+      const style = active
+        ? `style="background:${done ? "#86efac" : "#bfdbfe"};text-align:center;"`
+        : `style="background:#ffffff;"`;
+      return excelCell(active ? (done ? "■" : "□") : "", style);
+    }).join("");
+    return `<tr>${excelCell(task.title)}${excelCell(task.responsible)}${excelCell(task.risk)}${excelCell(`${p.actualProgress}%`)}${cells}</tr>`;
+  }).join("");
+  const html = `<!doctype html><html><head><meta charset="utf-8" />
+    <style>
+      body{font-family:Arial,'Microsoft YaHei',sans-serif;color:#111827}
+      h1{font-size:22px} h2{font-size:16px;margin-top:24px}
+      table{border-collapse:collapse;margin-bottom:18px;width:100%}
+      th{background:#e5e7eb;font-weight:700}
+      th,td{border:1px solid #9ca3af;padding:6px 8px;font-size:12px;vertical-align:top}
+      .kpi td:nth-child(odd){background:#f3f4f6;font-weight:700;width:120px}
+    </style></head><body>
+    <h1>${escapeHtml(project.name)} 项目管理表</h1>
+    <h2>项目概览</h2>
+    <table class="kpi">
+      <tr>${excelCell("Deadline")}${excelCell(project.deadline)}${excelCell("剩余/逾期")}${excelCell(remaining >= 0 ? `剩余 ${remaining} 天` : `逾期 ${Math.abs(remaining)} 天`)}</tr>
+      <tr>${excelCell("实际进度")}${excelCell(`${average(progress.map((entry) => entry.actualProgress))}%`)}${excelCell("计划进度")}${excelCell(`${average(progress.map((entry) => entry.plannedProgress))}%`)}</tr>
+      <tr>${excelCell("一句话总结")}${excelCell(project.summary, 'colspan="3"')}</tr>
+      <tr>${excelCell("TOP 风险")}${excelCell(project.topRisk, 'colspan="3"')}</tr>
+      <tr>${excelCell("下一步计划")}${excelCell(project.nextStep, 'colspan="3"')}</tr>
+    </table>
+    <h2>任务台账</h2>
+    <table><tr>${["风险","任务","负责人","开始","工期","结束","状态","计划%","实际%","实际完成日","备注"].map(excelHeader).join("")}</tr>${taskRows}</table>
+    <h2>日报记录</h2>
+    <table><tr>${["日期","负责人","关联任务","计划完成","实际完成","计划%","实际%","结果","延期原因"].map(excelHeader).join("")}</tr>${dailyRows}</table>
+    <h2>甘特图</h2>
+    <table><tr>${["任务","负责人","风险","实际%"].map(excelHeader).join("")}${dates.map((date) => excelHeader(date.slice(5))).join("")}</tr>${ganttRows}</table>
+    </body></html>`;
+  download(`${project.name}-project-table-${dateString()}.xls`, "application/vnd.ms-excel;charset=utf-8", `\ufeff${html}`);
 }
 
 async function copyShareLink() {
@@ -1011,6 +1293,35 @@ async function copyShareLink() {
   const url = `${siteUrl()}?share=${encodeURIComponent(project.publicSlug)}`;
   await navigator.clipboard.writeText(url);
   alert("公开链接已复制。");
+}
+
+function importSummaryText(workspace) {
+  const projectCount = workspace.projects.length;
+  const taskCount = workspace.projects.reduce((sum, project) => sum + project.tasks.length, 0);
+  const logCount = workspace.projects.reduce((sum, project) => sum + project.dailyLogs.length, 0);
+  return `识别到 ${projectCount} 个项目、${taskCount} 个任务、${logCount} 条日报。`;
+}
+
+async function previewImportFile(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    pendingImport = normalizeImportedWorkspace(parsed);
+    document.getElementById("importPreview").hidden = false;
+    document.getElementById("importSummary").textContent = importSummaryText(pendingImport.workspace);
+    document.getElementById("importDiagnostics").textContent = [
+      `识别格式：${pendingImport.format}`,
+      ...(pendingImport.diagnostics.length ? pendingImport.diagnostics : ["未发现需要人工处理的兼容问题。"])
+    ].join("\n");
+    document.getElementById("confirmImportButton").disabled = false;
+  } catch (error) {
+    pendingImport = null;
+    document.getElementById("importPreview").hidden = false;
+    document.getElementById("importSummary").textContent = "导入失败";
+    document.getElementById("importDiagnostics").textContent = error.message;
+    document.getElementById("confirmImportButton").disabled = true;
+  }
 }
 
 function bindEvents() {
@@ -1074,10 +1385,29 @@ function bindEvents() {
   document.getElementById("openTaskModal").addEventListener("click", () => openTaskEditor());
   document.getElementById("openDailyModal").addEventListener("click", () => openDailyEditor());
   document.getElementById("mobileOpenDaily").addEventListener("click", () => openDailyEditor());
+  document.getElementById("importButton").addEventListener("click", () => {
+    pendingImport = null;
+    document.getElementById("importFileInput").value = "";
+    document.getElementById("importPreview").hidden = true;
+    document.getElementById("confirmImportButton").disabled = true;
+    document.getElementById("importModal").showModal();
+  });
   document.getElementById("exportButton").addEventListener("click", () => document.getElementById("exportModal").showModal());
   document.getElementById("selectedDateBadge").addEventListener("click", openDatePicker);
   document.getElementById("exportJsonButton").addEventListener("click", exportJson);
   document.getElementById("exportCsvButton").addEventListener("click", exportCsv);
+  document.getElementById("exportExcelButton").addEventListener("click", exportExcel);
+  document.getElementById("importFileInput").addEventListener("change", (event) => previewImportFile(event.target.files[0]));
+  document.getElementById("confirmImportButton").addEventListener("click", async () => {
+    try {
+      const mode = document.querySelector("input[name='importMode']:checked")?.value || "merge";
+      await applyImportedWorkspace(mode);
+      document.getElementById("importModal").close();
+      alert("导入完成。");
+    } catch (error) {
+      alert(error.message);
+    }
+  });
   document.getElementById("copyShareLinkButton").addEventListener("click", copyShareLink);
   document.getElementById("deleteProjectButton").addEventListener("click", async () => {
     try { await deleteCurrentProject(); } catch (error) { alert(error.message); }

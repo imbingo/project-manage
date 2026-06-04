@@ -1,0 +1,112 @@
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from src.import_export import export_project_excel, normalize_workspace
+from src.models import DailyLog, ProgressEntry, Project, Task, Workspace
+
+
+def test_import_workspace_json():
+    workspace, diagnostics = normalize_workspace(
+        {
+            "selectedProjectId": "p1",
+            "selectedDate": "2026-05-06",
+            "projects": [
+                {
+                    "id": "p1",
+                    "name": "项目",
+                    "deadline": "2026-05-30",
+                    "tasks": [{"id": "t1", "title": "任务", "startDate": "2026-05-06", "duration": 4}],
+                }
+            ],
+        }
+    )
+    assert workspace.selectedProjectId == "p1"
+    assert workspace.projects[0].tasks[0].duration == 4
+    assert diagnostics[0].startswith("识别格式")
+
+
+def test_import_legacy_payload_and_snake_case():
+    workspace, _ = normalize_workspace(
+        {
+            "payload": {
+                "projects": [
+                    {
+                        "id": "p1",
+                        "top_risk": "风险",
+                        "next_step": "计划",
+                        "tasks": [
+                            {
+                                "id": "t1",
+                                "parent_id": None,
+                                "risk": "X",
+                                "title": "任务",
+                                "responsible": "张三",
+                                "start_date": "2026-05-06",
+                                "duration": "0",
+                                "status": "Bad",
+                                "progress_entries": [{"entry_date": "2026-05-06", "planned_progress": 120, "actual_progress": -1}],
+                            }
+                        ],
+                        "daily_logs": [
+                            {
+                                "task_id": "t1",
+                                "log_date": "2026-05-06",
+                                "plan_text": "计划",
+                                "actual_text": "实际",
+                                "planned_progress": 50,
+                                "actual_progress": 40,
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+    project = workspace.projects[0]
+    task = project.tasks[0]
+    assert project.topRisk == "风险"
+    assert project.nextStep == "计划"
+    assert task.risk == "M"
+    assert task.status == "Open"
+    assert task.duration == 1
+    assert task.progressEntries[0].plannedProgress == 100
+    assert task.progressEntries[0].actualProgress == 0
+    assert project.dailyLogs[0].planText == "计划"
+
+
+def test_import_local_storage_wrapped_json_string():
+    payload = {"projects": [{"id": "p1", "name": "项目", "tasks": []}]}
+    workspace, diagnostics = normalize_workspace({"project-desk-local-v5": json.dumps(payload, ensure_ascii=False)})
+    assert workspace.projects[0].name == "项目"
+    assert diagnostics[0] == "识别格式：localStorage project-desk-local-v5"
+
+
+def test_export_excel(tmp_path):
+    task = Task(
+        id="t1",
+        title="任务",
+        responsible="李四",
+        startDate="2026-05-06",
+        duration=4,
+        progressEntries=[ProgressEntry(entryDate="2026-05-06", plannedProgress=25, actualProgress=10)],
+    )
+    project = Project(
+        id="p1",
+        name="项目",
+        deadline="2026-05-30",
+        summary="一句话",
+        topRisk="风险",
+        nextStep="计划",
+        tasks=[task],
+        dailyLogs=[DailyLog(taskId="t1", date="2026-05-06", responsible="李四", planText="计划", actualText="实际")],
+    )
+    path = tmp_path / "project.xlsx"
+    export_project_excel(project, path)
+    assert path.exists()
+    assert path.stat().st_size > 1000

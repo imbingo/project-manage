@@ -30,7 +30,8 @@ All tables use Supabase Row Level Security. Authenticated users can CRUD only ro
 - Project settings control public sharing and produce `?share=<slug>` URLs.
 - Daily log submission writes both a daily log and a dated progress record.
 - Task overview displays latest recorded progress; the log view shows plan vs actual for the selected date.
-- Export supports complete project JSON and task CSV.
+- Export supports full workspace JSON, task CSV, and an Excel-readable project table with overview, task ledger, daily logs, and Gantt timeline.
+- Import supports workspace JSON, single-project JSON, Supabase legacy payloads, wrapped `data/workspace/payload` exports, and legacy localStorage keys. The UI previews counts and diagnostics before merge or replace.
 - Mobile layout suppresses dense grids and presents outstanding tasks plus quick daily entry.
 
 ## WeChat Mini Program MVP
@@ -48,9 +49,18 @@ All tables use Supabase Row Level Security. Authenticated users can CRUD only ro
   - `pages/daily-form`: daily log submission plus progress upsert and task status update.
 - Public sharing remains web-only through `?share=slug` for now.
 
+## Local Desktop MVP
+
+- Source lives in `local_desktop/`.
+- Runtime is Python + PySide6; data is local JSON under `%APPDATA%/ProjectDeskLocal/workspace.json`.
+- Non-GUI compatibility logic lives in `local_desktop/src/import_export.py`.
+- The desktop app imports web workspace JSON, single-project JSON, Supabase legacy payloads, wrapped `data/workspace/payload` exports, and old localStorage keys.
+- Excel export writes `.xlsx` with project overview, task ledger, daily logs, and a Gantt timeline.
+- The first desktop UI focuses on reading, importing, backup/export, and dashboard-style review. Full create/edit dialogs are still a follow-up.
+
 ## Technical Follow-Ups Worth Considering
 
-- Import JSON backups through the UI.
+- Consider adding automated import/export fixture tests around the new browser-side JSON compatibility logic.
 - Add optimistic concurrency/version checks if several people will edit the same project.
 - Add collaborators and role-based project membership; current ownership is single-user.
 - Add automated browser tests for auth-free public snapshot rendering and local preview forms.

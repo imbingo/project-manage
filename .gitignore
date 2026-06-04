@@ -4,3 +4,5 @@ Thumbs.db
 miniapp/config.js
 .wechat-upload/
 *.key
+__pycache__/
+*.pyc

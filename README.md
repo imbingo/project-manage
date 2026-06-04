@@ -96,3 +96,16 @@ python -m http.server 8080
 - [supabase/schema.sql](./supabase/schema.sql)：数据库升级和权限脚本
 - [miniapp/](./miniapp)：微信小程序 MVP
 - [HANDOFF.md](./HANDOFF.md)：后续继续开发说明
+## JSON 导入与 Excel 导出
+
+- `导入` 支持 workspace JSON、单项目 JSON、Supabase legacy `payload`、`data/workspace/payload` 包裹结构，以及 `project-desk-local-v5/v4`、`project-desk-v3` 旧 localStorage 导出结构。
+- 导入前会先预览识别到的项目数、任务数、日报数，并显示兼容诊断；可选择“合并到当前数据”或“覆盖当前数据”。
+- 导入会自动兼容 snake_case 与 camelCase 字段，例如 `top_risk/topRisk`、`parent_id/parentId`、`start_date/startDate`、`task_id/taskId`。
+- `导出 JSON 备份` 现在导出完整 workspace，适合后续恢复或跨设备迁移。
+- `导出 Excel 项目表` 会生成 Excel 可打开的 `.xls` 文件，包含项目概览、任务台账、日报记录和甘特图日期表。
+
+## 本地单机桌面版
+
+仓库新增 [local_desktop/](./local_desktop) Python 桌面版，不需要登录或 Supabase。它使用本地 JSON 保存数据，支持导入网页版 JSON，并可导出包含项目概览、任务台账、日报和甘特图的 Excel 项目管理表。
+
+运行和打包说明见 [local_desktop/README.md](./local_desktop/README.md)。

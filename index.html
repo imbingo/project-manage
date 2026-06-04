@@ -89,6 +89,7 @@
           <button class="ghost-button" id="createProjectButton">新增项目</button>
           <button class="primary-button" id="openTaskModal">新增任务</button>
           <button class="primary-button alt" id="openDailyModal">新增日报</button>
+          <button class="ghost-button" id="importButton">导入</button>
           <button class="ghost-button" id="exportButton">导出</button>
           <button class="ghost-button" id="logoutButton">退出</button>
         </div>
@@ -383,10 +384,34 @@
           <h3>导出项目数据</h3>
           <button type="button" class="icon-button" data-close="exportModal" aria-label="关闭">×</button>
         </div>
-        <p class="modal-note">JSON 可完整备份和恢复；CSV 便于在 Excel 中查看任务与进度。</p>
+        <p class="modal-note">JSON 用于完整备份；Excel 表格包含项目概览、任务台账、日报和甘特图；CSV 便于快速查看任务。</p>
         <div class="export-actions">
           <button type="button" class="primary-button" id="exportJsonButton">导出 JSON 备份</button>
+          <button type="button" class="primary-button alt" id="exportExcelButton">导出 Excel 项目表</button>
           <button type="button" class="ghost-button" id="exportCsvButton">导出 CSV</button>
+        </div>
+      </section>
+    </dialog>
+
+    <dialog id="importModal">
+      <section class="modal-form">
+        <div class="modal-head">
+          <h3>导入 JSON 数据</h3>
+          <button type="button" class="icon-button" data-close="importModal" aria-label="关闭">×</button>
+        </div>
+        <p class="modal-note">支持当前 workspace、单项目 JSON、Supabase legacy payload，以及带 data/workspace/payload 包裹的备份文件。</p>
+        <label>选择 JSON 文件 <input id="importFileInput" type="file" accept="application/json,.json" /></label>
+        <div class="import-options">
+          <label><input type="radio" name="importMode" value="merge" checked /> 合并到当前数据</label>
+          <label><input type="radio" name="importMode" value="replace" /> 覆盖当前数据</label>
+        </div>
+        <div id="importPreview" class="import-preview" hidden>
+          <strong id="importSummary"></strong>
+          <pre id="importDiagnostics"></pre>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="ghost-button" data-close="importModal">取消</button>
+          <button type="button" class="primary-button" id="confirmImportButton" disabled>确认导入</button>
         </div>
       </section>
     </dialog>
