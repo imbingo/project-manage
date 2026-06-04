@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor
@@ -143,7 +144,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
 
     def _build_menu(self) -> None:
-        backup_action = QAction("另存为备份", self)
+        backup_action = QAction("导出 JSON 备份", self)
         backup_action.triggered.connect(self.export_json)
         self.menuBar().addAction(backup_action)
 
@@ -268,12 +269,64 @@ class MainWindow(QMainWindow):
             return
         try:
             workspace, diagnostics = load_workspace_json(Path(file_name))
-            self.workspace = workspace
+            mode = self._confirm_import_mode(workspace, diagnostics)
+            if mode == "cancel":
+                return
+            if mode == "replace":
+                self.workspace = workspace
+            else:
+                self._merge_workspace(workspace)
             save_workspace(self.workspace)
             self.refresh()
-            QMessageBox.information(self, "导入完成", "\n".join(diagnostics))
+            QMessageBox.information(self, "导入完成", "\n".join(diagnostics + [f"导入方式：{'覆盖' if mode == 'replace' else '合并'}"]))
         except Exception as exc:
             QMessageBox.critical(self, "导入失败", str(exc))
+
+    def _confirm_import_mode(self, workspace: Workspace, diagnostics: list[str]) -> str:
+        project_count = len(workspace.projects)
+        task_count = sum(len(project.tasks) for project in workspace.projects)
+        log_count = sum(len(project.dailyLogs) for project in workspace.projects)
+        message = QMessageBox(self)
+        message.setWindowTitle("确认导入方式")
+        message.setText(f"识别到 {project_count} 个项目、{task_count} 个任务、{log_count} 条日报。")
+        message.setInformativeText("\n".join(diagnostics + ["请选择合并到当前数据，或覆盖当前全部本地数据。"]))
+        merge_button = message.addButton("合并到当前数据", QMessageBox.AcceptRole)
+        replace_button = message.addButton("覆盖当前数据", QMessageBox.DestructiveRole)
+        message.addButton("取消", QMessageBox.RejectRole)
+        message.exec()
+        clicked = message.clickedButton()
+        if clicked == merge_button:
+            return "merge"
+        if clicked == replace_button:
+            return "replace"
+        return "cancel"
+
+    def _merge_workspace(self, incoming: Workspace) -> None:
+        first_new_project_id = None
+        for project in incoming.projects:
+            old_project_id = project.id
+            project.id = str(uuid4())
+            if first_new_project_id is None:
+                first_new_project_id = project.id
+            task_ids = {}
+            for task in project.tasks:
+                old_task_id = task.id
+                task.id = str(uuid4())
+                task_ids[old_task_id] = task.id
+            for task in project.tasks:
+                if task.parentId:
+                    task.parentId = task_ids.get(task.parentId)
+            for log in project.dailyLogs:
+                log.id = str(uuid4())
+                log.taskId = task_ids.get(log.taskId, log.taskId)
+            if project.publicSlug:
+                project.publicSlug = f"{project.publicSlug}-{project.id[:6]}"
+            self.workspace.projects.append(project)
+            if incoming.selectedProjectId == old_project_id:
+                first_new_project_id = project.id
+        if first_new_project_id:
+            self.workspace.selectedProjectId = first_new_project_id
+        self.workspace.selectedDate = incoming.selectedDate or self.workspace.selectedDate
 
     def export_json(self) -> None:
         file_name, _ = QFileDialog.getSaveFileName(self, "导出 JSON", "project-desk-workspace.json", "JSON Files (*.json)")
