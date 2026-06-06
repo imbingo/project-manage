@@ -22,5 +22,19 @@ def test_main_window_initializes(tmp_path, monkeypatch):
     assert window.project_select.count() >= 1
     assert window.gantt.rows
     assert window.gantt.dates
+    assert window.gantt.left_view.width() == window.gantt.left_width
+    assert window.gantt.timeline is not None
+    assert window.gantt.day_width >= 44
+    assert window.gantt.left_width >= 420
+    assert window.project_select.minimumWidth() >= 180
+    assert window.project_select.maximumWidth() <= 260
+    assert window.task_table.verticalHeader().defaultSectionSize() >= 38
+    assert window.gantt.horizontalScrollBar().maximum() > 0
+    for width, height in [(1366, 768), (1600, 900), (1920, 1080)]:
+        window.resize(width, height)
+        app.processEvents()
+        assert window.gantt.day_width >= 44
+        assert window.gantt.horizontalScrollBar().pageStep() >= 1
+        assert window.gantt.left_view.width() == window.gantt.left_width
     window.close()
     app.quit()

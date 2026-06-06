@@ -63,37 +63,38 @@ STATUS_COLORS = {"Open": "#64748b", "Ongoing": "#2563eb", "Closed": "#0f766e"}
 
 
 QSS = """
-QMainWindow { background: #f6f2ea; }
-QWidget { font-family: "Microsoft YaHei", "Segoe UI", Arial; font-size: 13px; color: #1f2937; }
+QMainWindow { background: #f3f5f7; }
+QWidget { font-family: "Microsoft YaHei", "Segoe UI", Arial; font-size: 13px; color: #111827; }
 QPushButton, QToolButton {
-  border: 1px solid #d7cfc2; border-radius: 8px; padding: 8px 12px;
-  background: #fffdf9; color: #1f2937; font-weight: 700;
+  border: 1px solid #d7dee8; border-radius: 8px; padding: 8px 12px;
+  background: #ffffff; color: #1f2937; font-weight: 700;
 }
-QPushButton:hover, QToolButton:hover { background: #f8f2e8; border-color: #cfc3b4; }
+QPushButton:hover, QToolButton:hover { background: #f8fafc; border-color: #b8c3d1; }
 QPushButton#primary { background: #1f2937; color: #fffdf9; border-color: #1f2937; }
 QPushButton#alt { background: #0f766e; color: white; border-color: #0f766e; }
 QComboBox, QLineEdit, QSpinBox {
-  min-height: 30px; padding: 6px 10px; border: 1px solid #d7cfc2; border-radius: 8px; background: white;
+  min-height: 30px; padding: 6px 10px; border: 1px solid #d7dee8; border-radius: 8px; background: white;
 }
-QTextEdit { border: 1px solid #d7cfc2; border-radius: 8px; background: white; }
-QFrame#topbar, QFrame#panel, QFrame#card, QFrame#actionGroup {
-  background: #fffdf9; border: 1px solid #e4dccf; border-radius: 10px;
+QTextEdit { border: 1px solid #d7dee8; border-radius: 8px; background: white; }
+QFrame#topbar, QFrame#panel, QFrame#card, QFrame#actionGroup, QFrame#focusCard {
+  background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px;
 }
-QFrame#actionGroup { background: #fbf7ef; }
+QFrame#actionGroup { background: #f8fafc; }
+QFrame#focusCard { background: #111827; border-color: #111827; }
 QTableWidget {
-  background: #fffdf9; border: 0; gridline-color: #ece5d8;
-  selection-background-color: #dbeafe; alternate-background-color: #fbf7ef;
+  background: #ffffff; border: 0; gridline-color: #e5e7eb;
+  selection-background-color: #dbeafe; alternate-background-color: #f8fafc;
   font-size: 13px;
 }
 QHeaderView::section {
-  background: #ece5d8; color: #374151; padding: 9px 8px; border: 0;
+  background: #f1f5f9; color: #475569; padding: 9px 8px; border: 0;
   font-weight: 800; font-size: 13px;
 }
 QProgressBar {
   border: 0; border-radius: 5px; background: #e5e7eb; height: 8px; text-align: center;
 }
 QProgressBar::chunk { border-radius: 5px; background: #0f766e; }
-QMenu { background: #fffdf9; border: 1px solid #d7cfc2; border-radius: 8px; padding: 6px; }
+QMenu { background: #ffffff; border: 1px solid #d7dee8; border-radius: 8px; padding: 6px; }
 QMenu::item { padding: 8px 18px; border-radius: 6px; }
 QMenu::item:selected { background: #eaf4f1; color: #0f766e; }
 """
@@ -275,7 +276,221 @@ class DailyDialog(QDialog):
         }
 
 
-class GanttChartWidget(QAbstractScrollArea):
+class GanttTaskInfoWidget(QWidget):
+    def __init__(self, owner: "GanttChartWidget") -> None:
+        super().__init__(owner)
+        self.owner = owner
+        self.setMouseTracking(True)
+        self.setFixedWidth(owner.left_width)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+
+    def paintEvent(self, event) -> None:
+        owner = self.owner
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect()
+        vy = owner.verticalScrollBar().value()
+        painter.fillRect(rect, QColor("#ffffff"))
+        painter.fillRect(QRectF(0, 0, rect.width(), owner.header_height), QColor("#f1f5f9"))
+        headers = [("风险", 16, 46), ("任务", 58, 166), ("负责人", 226, 78), ("状态", 306, 68), ("实际", 374, 58)]
+        for label, x, w in headers:
+            owner.draw_elided_text(painter, QRectF(x, 0, w, owner.header_height), label, Qt.AlignVCenter | Qt.AlignLeft, "#374151", True)
+        for row, (task, depth) in enumerate(owner.rows):
+            y = owner.header_height + row * owner.row_height - vy
+            if y + owner.row_height < owner.header_height or y > rect.height():
+                continue
+            selected = task.id == owner.selected_task_id
+            painter.fillRect(QRectF(0, y, rect.width(), owner.row_height), QColor("#eaf4f1") if selected else QColor("#ffffff" if row % 2 == 0 else "#f8fafc"))
+            painter.setPen(QColor("#e5e7eb"))
+            painter.drawLine(0, int(y + owner.row_height - 1), rect.width(), int(y + owner.row_height - 1))
+            self._paint_task_info(painter, task, depth, y)
+        painter.setPen(QColor("#e5e7eb"))
+        painter.drawLine(0, owner.header_height - 1, rect.width(), owner.header_height - 1)
+        painter.drawLine(rect.width() - 1, 0, rect.width() - 1, rect.height())
+
+    def _paint_task_info(self, painter: QPainter, task: Task, depth: int, y: float) -> None:
+        owner = self.owner
+        entry = latest_entry(task)
+        risk_color = QColor(RISK_COLORS.get(task.risk, "#64748b"))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(risk_color)
+        painter.drawRoundedRect(QRectF(14, y + 13, 30, 22), 11, 11)
+        owner.draw_elided_text(painter, QRectF(14, y + 13, 30, 22), task.risk, Qt.AlignCenter, "#ffffff", True)
+        title_x = 58 + depth * 16
+        title_width = max(48, 166 - depth * 16)
+        owner.draw_elided_text(painter, QRectF(title_x, y, title_width, owner.row_height), task.title, Qt.AlignVCenter | Qt.AlignLeft, "#111827", owner.has_children(task))
+        owner.draw_elided_text(painter, QRectF(226, y, 78, owner.row_height), task.responsible, Qt.AlignVCenter | Qt.AlignLeft, "#6b7280")
+        owner.paint_pill(painter, QRectF(306, y + 13, 58, 22), STATUS_LABELS.get(task.status, task.status), STATUS_COLORS.get(task.status, "#64748b"))
+        owner.draw_elided_text(painter, QRectF(374, y, 58, owner.row_height), f"{entry.actualProgress}%", Qt.AlignVCenter | Qt.AlignRight, "#374151")
+
+    def _hit_row(self, point: QPoint) -> int | None:
+        return self.owner.hit_row(point.y())
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.owner.select_row(self._hit_row(event.pos()))
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.owner.edit_row(self._hit_row(event.pos()))
+
+    def mouseMoveEvent(self, event) -> None:
+        self.setToolTip(self.owner.tooltip_for_row(self._hit_row(event.pos())))
+
+
+class GanttTimelineWidget(QAbstractScrollArea):
+    def __init__(self, owner: "GanttChartWidget") -> None:
+        super().__init__(owner)
+        self.owner = owner
+        self.setMouseTracking(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.verticalScrollBar().valueChanged.connect(lambda _value: owner.left_view.update())
+        self.horizontalScrollBar().valueChanged.connect(lambda _value: self.viewport().update())
+
+    def sizeHint(self) -> QSize:
+        return QSize(520, 420)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(280, 320)
+
+    def update_scrollbars(self) -> None:
+        owner = self.owner
+        time_width = len(owner.dates) * owner.day_width
+        body_height = len(owner.rows) * owner.row_height
+        self.horizontalScrollBar().setRange(0, max(0, time_width - max(1, self.viewport().width())))
+        self.horizontalScrollBar().setPageStep(max(1, self.viewport().width()))
+        self.verticalScrollBar().setRange(0, max(0, body_height - max(1, self.viewport().height() - owner.header_height)))
+        self.verticalScrollBar().setPageStep(max(1, self.viewport().height() - owner.header_height))
+
+    def resizeEvent(self, event) -> None:
+        self.update_scrollbars()
+        super().resizeEvent(event)
+
+    def paintEvent(self, event) -> None:
+        owner = self.owner
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.viewport().rect()
+        painter.fillRect(rect, QColor("#ffffff"))
+        hx = self.horizontalScrollBar().value()
+        vy = self.verticalScrollBar().value()
+        self._paint_header(painter, rect, hx)
+        self._paint_rows(painter, rect, hx, vy)
+        self._paint_today_line(painter, rect, hx)
+
+    def _paint_header(self, painter: QPainter, rect, hx: int) -> None:
+        owner = self.owner
+        painter.fillRect(QRectF(0, 0, rect.width(), owner.header_height), QColor("#f1f5f9"))
+        for index, date_value in enumerate(owner.dates):
+            x = index * owner.day_width - hx
+            if x + owner.day_width < 0 or x > rect.width():
+                continue
+            fill = QColor("#e2e8f0") if owner.is_weekend(date_value) else QColor("#f1f5f9")
+            painter.fillRect(QRectF(x, 0, owner.day_width, owner.header_height), fill)
+            date_text = date_value[5:] if owner.day_width >= 46 else date_value[8:]
+            owner.draw_elided_text(painter, QRectF(x, 6, owner.day_width, 20), date_text, Qt.AlignCenter, "#374151", True)
+            owner.draw_elided_text(painter, QRectF(x, 29, owner.day_width, 18), owner.weekday_label(date_value), Qt.AlignCenter, "#6b7280")
+        painter.setPen(QColor("#e5e7eb"))
+        painter.drawLine(0, owner.header_height - 1, rect.width(), owner.header_height - 1)
+
+    def _paint_rows(self, painter: QPainter, rect, hx: int, vy: int) -> None:
+        owner = self.owner
+        today_value = today()
+        for row, (task, _depth) in enumerate(owner.rows):
+            y = owner.header_height + row * owner.row_height - vy
+            if y + owner.row_height < owner.header_height or y > rect.height():
+                continue
+            selected = task.id == owner.selected_task_id
+            painter.fillRect(QRectF(0, y, rect.width(), owner.row_height), QColor("#eaf4f1") if selected else QColor("#ffffff" if row % 2 == 0 else "#f8fafc"))
+            for index, date_value in enumerate(owner.dates):
+                x = index * owner.day_width - hx
+                if x + owner.day_width < 0 or x > rect.width():
+                    continue
+                if owner.is_weekend(date_value):
+                    painter.fillRect(QRectF(x, y, owner.day_width, owner.row_height), QColor(243, 244, 246, 145))
+                if date_value == owner.selected_date:
+                    painter.fillRect(QRectF(x, y, owner.day_width, owner.row_height), QColor(219, 234, 254, 120))
+            painter.setPen(QColor("#e5e7eb"))
+            painter.drawLine(0, int(y + owner.row_height - 1), rect.width(), int(y + owner.row_height - 1))
+            self._paint_task_bar(painter, task, y, hx, today_value)
+
+    def _paint_task_bar(self, painter: QPainter, task: Task, y: float, hx: int, today_value: str) -> None:
+        owner = self.owner
+        if task.startDate not in owner.dates:
+            return
+        start_index = owner.dates.index(task.startDate)
+        x = start_index * owner.day_width - hx + 6
+        width = max(14, task.duration * owner.day_width - 12)
+        if x + width < 0 or x > self.viewport().width():
+            return
+        painter.save()
+        painter.setClipRect(QRectF(0, owner.header_height, self.viewport().width(), max(0, self.viewport().height() - owner.header_height)).toRect())
+        entry = latest_entry(task)
+        is_parent = owner.has_children(task)
+        overdue = task.status != "Closed" and task_end_date(task) < today_value
+        base_color = QColor("#dbeafe")
+        fill_color = QColor("#1f2937")
+        if task.status == "Closed":
+            base_color = QColor("#d1fae5")
+            fill_color = QColor("#0f766e")
+        elif overdue:
+            base_color = QColor("#fee2e2")
+            fill_color = QColor("#dc2626")
+        bar_h = 22 if is_parent else 18
+        bar_y = y + (owner.row_height - bar_h) / 2
+        painter.setPen(QPen(QColor("#dc2626") if overdue else QColor("#cbd5e1"), 2 if overdue else 1))
+        painter.setBrush(base_color)
+        painter.drawRoundedRect(QRectF(x, bar_y, width, bar_h), 8, 8)
+        actual_progress = max(0, min(100, int(entry.actualProgress)))
+        actual_w = max(0, min(width, width * actual_progress / 100))
+        if actual_w > 0:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(fill_color)
+            painter.drawRoundedRect(QRectF(x, bar_y, actual_w, bar_h), 8, 8)
+        if entry.plannedProgress > entry.actualProgress:
+            planned_w = max(0, min(width, width * max(0, min(100, int(entry.plannedProgress))) / 100))
+            painter.setPen(QPen(QColor("#64748b"), 2, Qt.DashLine))
+            painter.drawLine(int(x), int(bar_y + bar_h + 4), int(x + planned_w), int(bar_y + bar_h + 4))
+        progress_text = f"{actual_progress}%"
+        if width >= max(52, painter.fontMetrics().horizontalAdvance(progress_text) + 12):
+            text_color = "#ffffff" if actual_progress > 24 else "#111827"
+            owner.draw_elided_text(painter, QRectF(x, bar_y, width, bar_h), progress_text, Qt.AlignCenter, text_color, True)
+        painter.restore()
+
+    def _paint_today_line(self, painter: QPainter, rect, hx: int) -> None:
+        owner = self.owner
+        today_value = today()
+        if today_value not in owner.dates:
+            return
+        x = owner.dates.index(today_value) * owner.day_width - hx + owner.day_width / 2
+        if 0 <= x <= rect.width():
+            painter.setPen(QPen(QColor("#bf5d35"), 2))
+            painter.drawLine(int(x), owner.header_height, int(x), rect.height())
+            label_left = max(0.0, float(x - 22))
+            label_width = min(44.0, float(rect.width()) - label_left)
+            if label_width >= 18:
+                owner.draw_elided_text(painter, QRectF(label_left, 0, label_width, 18), "今日", Qt.AlignCenter, "#bf5d35", True)
+
+    def _hit_date(self, point: QPoint) -> str | None:
+        owner = self.owner
+        index = int((point.x() + self.horizontalScrollBar().value()) / owner.day_width)
+        return owner.dates[index] if 0 <= index < len(owner.dates) else None
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() != Qt.LeftButton:
+            return
+        if event.pos().y() >= self.owner.header_height:
+            self.owner.select_date(self._hit_date(event.pos()))
+        self.owner.select_row(self.owner.hit_row(event.pos().y()))
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.owner.edit_row(self.owner.hit_row(event.pos().y()))
+
+    def mouseMoveEvent(self, event) -> None:
+        self.setToolTip(self.owner.tooltip_for_row(self.owner.hit_row(event.pos().y())))
+
+
+class GanttChartWidget(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.project: Project | None = None
@@ -286,16 +501,34 @@ class GanttChartWidget(QAbstractScrollArea):
         self.on_task_selected = None
         self.on_task_edit = None
         self.on_date_selected = None
-        self.left_width = 430
-        self.header_height = 44
-        self.row_height = 46
-        self.day_width = 38
-        self.setMouseTracking(True)
-        self.setFrameShape(QFrame.NoFrame)
+        self.left_width = 480
+        self.header_height = 54
+        self.row_height = 48
+        self.day_width = 48
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.left_view = GanttTaskInfoWidget(self)
+        self.timeline = GanttTimelineWidget(self)
+        layout.addWidget(self.left_view)
+        layout.addWidget(self.timeline, 1)
+
     def sizeHint(self) -> QSize:
-        return QSize(820, 360)
+        return QSize(920, 420)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(760, 320)
+
+    def horizontalScrollBar(self):
+        return self.timeline.horizontalScrollBar()
+
+    def verticalScrollBar(self):
+        return self.timeline.verticalScrollBar()
+
+    def viewport(self):
+        return self.timeline.viewport()
 
     def set_project(self, project: Project | None, selected_date: str, selected_task_id: str | None = None) -> None:
         self.project = project
@@ -303,8 +536,17 @@ class GanttChartWidget(QAbstractScrollArea):
         self.selected_date = selected_date or today()
         self.selected_task_id = selected_task_id
         self.dates = self._date_range()
-        self._update_scrollbars()
-        self.viewport().update()
+        self.refresh_views()
+
+    def set_selected_task(self, task_id: str | None) -> None:
+        self.selected_task_id = task_id
+        self.refresh_views(update_scrollbars=False)
+
+    def refresh_views(self, update_scrollbars: bool = True) -> None:
+        if update_scrollbars:
+            self.timeline.update_scrollbars()
+        self.left_view.update()
+        self.timeline.viewport().update()
 
     def _date_range(self) -> list[str]:
         if not self.project or not self.project.tasks:
@@ -318,201 +560,72 @@ class GanttChartWidget(QAbstractScrollArea):
         total = min(max(days_between(start, end) + 1, 30), 180)
         return [add_days(start, index) for index in range(total)]
 
-    def _update_scrollbars(self) -> None:
-        time_width = len(self.dates) * self.day_width
-        body_height = len(self.rows) * self.row_height
-        self.horizontalScrollBar().setRange(0, max(0, time_width - max(1, self.viewport().width() - self.left_width)))
-        self.horizontalScrollBar().setPageStep(max(1, self.viewport().width() - self.left_width))
-        self.verticalScrollBar().setRange(0, max(0, body_height - max(1, self.viewport().height() - self.header_height)))
-        self.verticalScrollBar().setPageStep(max(1, self.viewport().height() - self.header_height))
-
-    def resizeEvent(self, event) -> None:
-        self._update_scrollbars()
-        super().resizeEvent(event)
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self.viewport())
-        painter.setRenderHint(QPainter.Antialiasing)
-        rect = self.viewport().rect()
-        painter.fillRect(rect, QColor("#fffdf9"))
-        hx = self.horizontalScrollBar().value()
-        vy = self.verticalScrollBar().value()
-        self._paint_header(painter, rect, hx)
-        self._paint_rows(painter, rect, hx, vy)
-        self._paint_today_line(painter, rect, hx)
-
-    def _paint_header(self, painter: QPainter, rect, hx: int) -> None:
-        painter.fillRect(QRectF(0, 0, rect.width(), self.header_height), QColor("#f7f1e7"))
-        painter.fillRect(QRectF(0, 0, self.left_width, self.header_height), QColor("#f1eadf"))
-        painter.setPen(QColor("#374151"))
-        painter.setFont(self.font())
-        headers = [("风险", 16, 46), ("任务", 58, 166), ("负责人", 226, 78), ("状态", 306, 68), ("实际", 374, 50)]
-        for label, x, w in headers:
-            painter.drawText(QRectF(x, 0, w, self.header_height), Qt.AlignVCenter | Qt.AlignLeft, label)
-        for index, date_value in enumerate(self.dates):
-            x = self.left_width + index * self.day_width - hx
-            if x + self.day_width < self.left_width or x > rect.width():
-                continue
-            fill = QColor("#eee7dc") if self._is_weekend(date_value) else QColor("#f7f1e7")
-            painter.fillRect(QRectF(x, 0, self.day_width, self.header_height), fill)
-            painter.setPen(QColor("#6b7280"))
-            painter.drawText(QRectF(x, 4, self.day_width, 18), Qt.AlignCenter, date_value[5:])
-            painter.drawText(QRectF(x, 22, self.day_width, 18), Qt.AlignCenter, self._weekday_label(date_value))
-        painter.setPen(QColor("#e4dccf"))
-        painter.drawLine(0, self.header_height - 1, rect.width(), self.header_height - 1)
-        painter.drawLine(self.left_width - 1, 0, self.left_width - 1, rect.height())
-
-    def _paint_rows(self, painter: QPainter, rect, hx: int, vy: int) -> None:
-        today_value = today()
-        for row, (task, depth) in enumerate(self.rows):
-            y = self.header_height + row * self.row_height - vy
-            if y + self.row_height < self.header_height or y > rect.height():
-                continue
-            selected = task.id == self.selected_task_id
-            painter.fillRect(QRectF(0, y, rect.width(), self.row_height), QColor("#eaf4f1") if selected else QColor("#ffffff" if row % 2 == 0 else "#fbf7ef"))
-            painter.setPen(QColor("#ece5d8"))
-            painter.drawLine(0, y + self.row_height - 1, rect.width(), y + self.row_height - 1)
-            self._paint_left_task(painter, task, depth, y)
-            for index, date_value in enumerate(self.dates):
-                x = self.left_width + index * self.day_width - hx
-                if x + self.day_width < self.left_width or x > rect.width():
-                    continue
-                if self._is_weekend(date_value):
-                    painter.fillRect(QRectF(x, y, self.day_width, self.row_height), QColor(243, 244, 246, 145))
-                if date_value == self.selected_date:
-                    painter.fillRect(QRectF(x, y, self.day_width, self.row_height), QColor(219, 234, 254, 120))
-            self._paint_task_bar(painter, task, y, hx, today_value)
-
-    def _paint_left_task(self, painter: QPainter, task: Task, depth: int, y: float) -> None:
-        entry = latest_entry(task)
-        risk_color = QColor(RISK_COLORS.get(task.risk, "#64748b"))
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(risk_color)
-        painter.drawRoundedRect(QRectF(14, y + 12, 30, 22), 11, 11)
-        painter.setPen(QColor("#ffffff"))
-        painter.drawText(QRectF(14, y + 12, 30, 22), Qt.AlignCenter, task.risk)
-        title_x = 58 + depth * 16
-        painter.setPen(QColor("#111827"))
+    def draw_elided_text(self, painter: QPainter, rect: QRectF, text: object, flags: Qt.AlignmentFlag | Qt.Alignment, color: str | None = None, bold: bool = False) -> None:
+        painter.save()
+        painter.setClipRect(rect.toRect())
+        if color:
+            painter.setPen(QColor(color))
         font = painter.font()
-        font.setBold(self._has_children(task))
+        font.setBold(bold)
         painter.setFont(font)
-        title = task.title if len(task.title) <= 24 else task.title[:23] + "…"
-        painter.drawText(QRectF(title_x, y, 166 - depth * 16, self.row_height), Qt.AlignVCenter | Qt.AlignLeft, title)
-        font.setBold(False)
-        painter.setFont(font)
-        painter.setPen(QColor("#6b7280"))
-        painter.drawText(QRectF(226, y, 78, self.row_height), Qt.AlignVCenter | Qt.AlignLeft, task.responsible)
-        self._paint_pill(painter, QRectF(306, y + 12, 58, 22), STATUS_LABELS.get(task.status, task.status), STATUS_COLORS.get(task.status, "#64748b"))
-        painter.setPen(QColor("#374151"))
-        painter.drawText(QRectF(374, y, 48, self.row_height), Qt.AlignVCenter | Qt.AlignRight, f"{entry.actualProgress}%")
+        text_rect = rect.adjusted(4, 0, -4, 0)
+        width = max(0, int(text_rect.width()))
+        elided = painter.fontMetrics().elidedText(str(text), Qt.ElideRight, width)
+        painter.drawText(text_rect, flags, elided)
+        painter.restore()
 
-    def _paint_task_bar(self, painter: QPainter, task: Task, y: float, hx: int, today_value: str) -> None:
-        if task.startDate not in self.dates:
-            return
-        start_index = self.dates.index(task.startDate)
-        x = self.left_width + start_index * self.day_width - hx + 5
-        width = max(12, task.duration * self.day_width - 10)
-        if x + width < self.left_width or x > self.viewport().width():
-            return
-        entry = latest_entry(task)
-        is_parent = self._has_children(task)
-        overdue = task.status != "Closed" and task_end_date(task) < today_value
-        base_color = QColor("#dbeafe")
-        fill_color = QColor("#1f2937")
-        if task.status == "Closed":
-            base_color = QColor("#d1fae5")
-            fill_color = QColor("#0f766e")
-        elif overdue:
-            base_color = QColor("#fee2e2")
-            fill_color = QColor("#dc2626")
-        bar_h = 22 if is_parent else 18
-        bar_y = y + (self.row_height - bar_h) / 2
-        painter.setPen(QPen(QColor("#dc2626") if overdue else QColor("#cbd5e1"), 2 if overdue else 1))
-        painter.setBrush(base_color)
-        painter.drawRoundedRect(QRectF(x, bar_y, width, bar_h), 8, 8)
-        actual_w = max(4, width * entry.actualProgress / 100)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(fill_color)
-        painter.drawRoundedRect(QRectF(x, bar_y, actual_w, bar_h), 8, 8)
-        if entry.plannedProgress > entry.actualProgress:
-            planned_w = max(4, width * entry.plannedProgress / 100)
-            painter.setPen(QPen(QColor("#64748b"), 2, Qt.DashLine))
-            painter.drawLine(int(x), int(bar_y + bar_h + 4), int(x + planned_w), int(bar_y + bar_h + 4))
-        painter.setPen(QColor("#ffffff") if entry.actualProgress > 24 else QColor("#111827"))
-        painter.drawText(QRectF(x, bar_y, width, bar_h), Qt.AlignCenter, f"{entry.actualProgress}%")
-
-    def _paint_pill(self, painter: QPainter, rect: QRectF, text: str, color: str) -> None:
+    def paint_pill(self, painter: QPainter, rect: QRectF, text: str, color: str) -> None:
         qcolor = QColor(color)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(qcolor.red(), qcolor.green(), qcolor.blue(), 32))
         painter.drawRoundedRect(rect, 10, 10)
-        painter.setPen(qcolor)
-        painter.drawText(rect, Qt.AlignCenter, text)
+        self.draw_elided_text(painter, rect, text, Qt.AlignCenter, color, True)
 
-    def _paint_today_line(self, painter: QPainter, rect, hx: int) -> None:
-        today_value = today()
-        if today_value not in self.dates:
-            return
-        x = self.left_width + self.dates.index(today_value) * self.day_width - hx + self.day_width / 2
-        if self.left_width <= x <= rect.width():
-            painter.setPen(QPen(QColor("#bf5d35"), 2))
-            painter.drawLine(int(x), self.header_height, int(x), rect.height())
-            painter.setPen(QColor("#bf5d35"))
-            painter.drawText(QRectF(x - 18, 0, 36, 18), Qt.AlignCenter, "今日")
-
-    def _hit_row(self, point: QPoint) -> int | None:
-        if point.y() < self.header_height:
+    def hit_row(self, y: int) -> int | None:
+        if y < self.header_height:
             return None
-        row = int((point.y() - self.header_height + self.verticalScrollBar().value()) / self.row_height)
+        row = int((y - self.header_height + self.verticalScrollBar().value()) / self.row_height)
         return row if 0 <= row < len(self.rows) else None
 
-    def _hit_date(self, point: QPoint) -> str | None:
-        if point.x() < self.left_width:
-            return None
-        index = int((point.x() - self.left_width + self.horizontalScrollBar().value()) / self.day_width)
-        return self.dates[index] if 0 <= index < len(self.dates) else None
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() != Qt.LeftButton:
+    def select_row(self, row: int | None) -> None:
+        if row is None:
             return
-        date_value = self._hit_date(event.pos())
-        if date_value:
-            self.selected_date = date_value
-            if self.on_date_selected:
-                self.on_date_selected(date_value)
-        row = self._hit_row(event.pos())
-        if row is not None:
-            task = self.rows[row][0]
-            self.selected_task_id = task.id
-            if self.on_task_selected:
-                self.on_task_selected(task.id)
-        self.viewport().update()
+        task = self.rows[row][0]
+        self.selected_task_id = task.id
+        if self.on_task_selected:
+            self.on_task_selected(task.id)
+        self.refresh_views(update_scrollbars=False)
 
-    def mouseDoubleClickEvent(self, event) -> None:
-        row = self._hit_row(event.pos())
+    def edit_row(self, row: int | None) -> None:
         if row is not None and self.on_task_edit:
             self.on_task_edit(self.rows[row][0].id)
 
-    def mouseMoveEvent(self, event) -> None:
-        row = self._hit_row(event.pos())
-        if row is None:
-            self.setToolTip("")
+    def select_date(self, value: str | None) -> None:
+        if not value:
             return
+        self.selected_date = value
+        if self.on_date_selected:
+            self.on_date_selected(value)
+        self.refresh_views(update_scrollbars=False)
+
+    def tooltip_for_row(self, row: int | None) -> str:
+        if row is None:
+            return ""
         task = self.rows[row][0]
         entry = latest_entry(task)
-        self.setToolTip(
+        return (
             f"{task.title}\n负责人：{task.responsible}\n开始：{task.startDate}\n结束：{task_end_date(task)}\n"
             f"工期：{task.duration} 天\n计划：{entry.plannedProgress}%\n实际：{entry.actualProgress}%\n"
             f"状态：{STATUS_LABELS.get(task.status, task.status)}\n备注：{task.note}"
         )
 
-    def _is_weekend(self, value: str) -> bool:
+    def is_weekend(self, value: str) -> bool:
         return date.fromisoformat(value).weekday() >= 5
 
-    def _weekday_label(self, value: str) -> str:
+    def weekday_label(self, value: str) -> str:
         return "一二三四五六日"[date.fromisoformat(value).weekday()]
 
-    def _has_children(self, task: Task) -> bool:
+    def has_children(self, task: Task) -> bool:
         return bool(self.project and any(item.parentId == task.id for item in self.project.tasks))
 
 
@@ -524,6 +637,7 @@ class MainWindow(QMainWindow):
         self.selected_task_id: str | None = None
         self.setWindowTitle("Project Desk Local")
         self.resize(1560, 900)
+        self.setMinimumSize(1180, 720)
         self._build_ui()
         self.refresh()
 
@@ -536,8 +650,8 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         root = QWidget()
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(14)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
         layout.addWidget(self._build_topbar())
         layout.addLayout(self._build_cards())
         layout.addLayout(self._build_briefs())
@@ -560,42 +674,55 @@ class MainWindow(QMainWindow):
         right_splitter.setChildrenCollapsible(False)
         right_splitter.addWidget(self._panel("甘特图", self.gantt))
         right_splitter.addWidget(self._panel("日报记录", self.log_table, [("编辑日报", self.edit_daily), ("删除日报", self.delete_daily)], self.selected_date_label))
-        right_splitter.setSizes([520, 260])
+        right_splitter.setSizes([560, 220])
         splitter.addWidget(left_panel)
         splitter.addWidget(right_splitter)
-        splitter.setSizes([680, 820])
+        splitter.setSizes([560, 1000])
         layout.addWidget(splitter, 1)
         self.setCentralWidget(root)
 
     def _build_topbar(self) -> QFrame:
         top = QFrame(objectName="topbar")
         top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(18, 14, 18, 14)
+        top_layout.setContentsMargins(22, 16, 22, 16)
+        top_layout.setSpacing(14)
         title_box = QVBoxLayout()
+        title_box.setSpacing(4)
         eyebrow = QLabel("Project Desk Local")
-        eyebrow.setStyleSheet("color:#0f766e;font-weight:900;font-size:12px;")
+        eyebrow.setStyleSheet("color:#2563eb;font-weight:900;font-size:12px;")
         self.title = QLabel()
-        self.title.setStyleSheet("font-size:26px;font-weight:900;")
+        self.title.setMinimumWidth(260)
+        self.title.setStyleSheet("font-size:25px;font-weight:900;color:#0f172a;")
         self.summary = QLabel()
+        self.summary.setMinimumWidth(260)
         self.summary.setWordWrap(True)
-        self.summary.setStyleSheet("color:#6b7280;")
+        self.summary.setStyleSheet("color:#64748b;")
         title_box.addWidget(eyebrow)
         title_box.addWidget(self.title)
         title_box.addWidget(self.summary)
         top_layout.addLayout(title_box, 1)
 
         self.project_select = QComboBox()
-        self.project_select.setMinimumWidth(190)
+        self.project_select.setMinimumWidth(180)
+        self.project_select.setMaximumWidth(260)
         self.project_select.currentIndexChanged.connect(self._select_project)
-        project_group = self._action_group("项目", [
-            ("项目设置", self.edit_project, ""),
-            ("新增项目", self.add_project, ""),
-            ("删除项目", self.delete_project, ""),
-        ])
         task_group = self._action_group("任务", [
             ("新增任务", self.add_task, "primary"),
             ("写日报", self.add_daily, "alt"),
         ])
+        project_button = QToolButton()
+        project_button.setText("项目")
+        project_button.setPopupMode(QToolButton.InstantPopup)
+        project_menu = QMenu(project_button)
+        for text, handler in [
+            ("项目设置", self.edit_project),
+            ("新增项目", self.add_project),
+            ("删除项目", self.delete_project),
+        ]:
+            action = QAction(text, self)
+            action.triggered.connect(handler)
+            project_menu.addAction(action)
+        project_button.setMenu(project_menu)
         data_button = QToolButton()
         data_button.setText("数据")
         data_button.setPopupMode(QToolButton.InstantPopup)
@@ -612,13 +739,14 @@ class MainWindow(QMainWindow):
             menu.addAction(action)
         data_button.setMenu(menu)
         picker_box = QVBoxLayout()
+        picker_box.setSpacing(4)
         picker_label = QLabel("当前项目")
-        picker_label.setStyleSheet("color:#6b7280;font-weight:800;font-size:12px;")
+        picker_label.setStyleSheet("color:#64748b;font-weight:800;font-size:12px;")
         picker_box.addWidget(picker_label)
         picker_box.addWidget(self.project_select)
         top_layout.addLayout(picker_box)
-        top_layout.addWidget(project_group)
         top_layout.addWidget(task_group)
+        top_layout.addWidget(project_button)
         top_layout.addWidget(data_button)
         return top
 
@@ -640,50 +768,57 @@ class MainWindow(QMainWindow):
     def _build_cards(self) -> QGridLayout:
         cards = QGridLayout()
         cards.setHorizontalSpacing(12)
-        self.deadline_card = self._card("项目截止日")
-        self.actual_card = self._card("项目实际进度")
-        self.planned_card = self._card("计划应达进度")
+        cards.setVerticalSpacing(12)
+        self.status_card = self._card("项目状态", focus=True)
+        self.deadline_card = self._card("Deadline")
+        self.actual_card = self._card("实际进度", accent="#0f766e")
+        self.planned_card = self._card("计划进度")
         self.overdue_card = self._card("逾期任务")
-        for index, card in enumerate([self.deadline_card, self.actual_card, self.planned_card, self.overdue_card]):
+        for index, card in enumerate([self.status_card, self.deadline_card, self.actual_card, self.planned_card, self.overdue_card]):
             cards.addWidget(card["frame"], 0, index)
         return cards
 
     def _build_briefs(self) -> QGridLayout:
         briefs = QGridLayout()
         briefs.setHorizontalSpacing(12)
-        self.summary_card = self._brief("一句话总结")
-        self.risk_card = self._brief("TOP 风险")
-        self.next_card = self._brief("下一步计划")
+        briefs.setVerticalSpacing(12)
+        self.summary_card = self._brief("一句话总结", "#2563eb")
+        self.risk_card = self._brief("TOP 风险", "#dc2626")
+        self.next_card = self._brief("下一步计划", "#0f766e")
         for index, card in enumerate([self.summary_card, self.risk_card, self.next_card]):
             briefs.addWidget(card["frame"], 0, index)
         return briefs
 
-    def _card(self, label: str) -> dict:
-        frame = QFrame(objectName="card")
+    def _card(self, label: str, focus: bool = False, accent: str = "#0f172a") -> dict:
+        frame = QFrame(objectName="focusCard" if focus else "card")
         frame.setMinimumHeight(104)
         self._add_shadow(frame)
         box = QVBoxLayout(frame)
+        box.setContentsMargins(18, 14, 18, 14)
+        box.setSpacing(4)
         small = QLabel(label)
-        small.setStyleSheet("color:#6b7280;font-weight:800;")
+        small.setStyleSheet(("color:#cbd5e1;" if focus else "color:#64748b;") + "font-weight:800;")
         value = QLabel("-")
-        value.setStyleSheet("font-size:28px;font-weight:900;")
+        value.setStyleSheet(("color:#ffffff;" if focus else f"color:{accent};") + "font-size:28px;font-weight:900;")
         note = QLabel("")
-        note.setStyleSheet("color:#6b7280;")
+        note.setStyleSheet("color:#fbbf24;font-weight:800;" if focus else "color:#64748b;")
         box.addWidget(small)
         box.addWidget(value)
         box.addWidget(note)
         return {"frame": frame, "value": value, "note": note}
 
-    def _brief(self, title: str) -> dict:
+    def _brief(self, title: str, accent: str) -> dict:
         frame = QFrame(objectName="card")
-        frame.setMinimumHeight(96)
+        frame.setMinimumHeight(112)
         self._add_shadow(frame)
         box = QVBoxLayout(frame)
+        box.setContentsMargins(18, 14, 18, 14)
+        box.setSpacing(8)
         head = QLabel(title)
-        head.setStyleSheet("font-size:15px;font-weight:900;")
+        head.setStyleSheet(f"font-size:15px;font-weight:900;color:#0f172a;border-left:4px solid {accent};padding-left:10px;")
         body = QLabel()
         body.setWordWrap(True)
-        body.setStyleSheet("color:#374151;line-height:1.5;")
+        body.setStyleSheet("color:#334155;line-height:1.45;")
         box.addWidget(head)
         box.addWidget(body)
         return {"frame": frame, "body": body}
@@ -709,9 +844,9 @@ class MainWindow(QMainWindow):
 
     def _add_shadow(self, widget: QWidget) -> None:
         shadow = QGraphicsDropShadowEffect(widget)
-        shadow.setBlurRadius(18)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(36, 24, 14, 26))
+        shadow.setBlurRadius(14)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(15, 23, 42, 22))
         widget.setGraphicsEffect(shadow)
 
     def _configure_task_table(self) -> None:
@@ -719,22 +854,28 @@ class MainWindow(QMainWindow):
         self.task_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.task_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.task_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.task_table.setTextElideMode(Qt.ElideRight)
+        self.task_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.task_table.setMinimumHeight(320)
         self.task_table.setColumnCount(10)
         self.task_table.setHorizontalHeaderLabels(["风险", "任务", "负责人", "开始", "工期", "结束", "状态", "计划", "实际", "备注"])
         self.task_table.verticalHeader().setVisible(False)
         self.task_table.verticalHeader().setDefaultSectionSize(38)
         header = self.task_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setStretchLastSection(True)
+        header.setMinimumSectionSize(58)
+        header.setSectionResizeMode(QHeaderView.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setStretchLastSection(False)
         self.task_table.setColumnWidth(0, 62)
-        self.task_table.setColumnWidth(1, 220)
+        self.task_table.setColumnWidth(1, 260)
         self.task_table.setColumnWidth(2, 90)
         self.task_table.setColumnWidth(3, 92)
         self.task_table.setColumnWidth(4, 58)
         self.task_table.setColumnWidth(5, 92)
-        self.task_table.setColumnWidth(6, 78)
-        self.task_table.setColumnWidth(7, 98)
-        self.task_table.setColumnWidth(8, 98)
+        self.task_table.setColumnWidth(6, 86)
+        self.task_table.setColumnWidth(7, 112)
+        self.task_table.setColumnWidth(8, 112)
+        self.task_table.setColumnWidth(9, 160)
         self.task_table.itemDoubleClicked.connect(lambda _item: self.edit_task())
 
     def _configure_log_table(self) -> None:
@@ -742,6 +883,7 @@ class MainWindow(QMainWindow):
         self.log_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.log_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.log_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.log_table.setTextElideMode(Qt.ElideRight)
         self.log_table.setColumnCount(7)
         self.log_table.setHorizontalHeaderLabels(["日期", "负责人", "任务", "计划", "实际", "结果", "延期原因"])
         self.log_table.verticalHeader().setVisible(False)
@@ -763,11 +905,14 @@ class MainWindow(QMainWindow):
         planned, actual = project_progress(project)
         self.title.setText(project.name)
         self.summary.setText(project.summary)
+        overdue_tasks = overdue_count(project)
+        self.status_card["value"].setText("注意" if overdue_tasks else "正常")
+        self.status_card["note"].setText(f"{overdue_tasks}项逾期" if overdue_tasks else "按计划推进")
         self.deadline_card["value"].setText(project.deadline)
         self.deadline_card["note"].setText("项目最关键的时间约束")
         self.actual_card["value"].setText(f"{actual}%")
         self.planned_card["value"].setText(f"{planned}%")
-        self.overdue_card["value"].setText(str(overdue_count(project)))
+        self.overdue_card["value"].setText(str(overdue_tasks))
         self.summary_card["body"].setText(project.summary)
         self.risk_card["body"].setText(project.topRisk)
         self.next_card["body"].setText(project.nextStep)
@@ -810,6 +955,8 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(box)
         layout.setContentsMargins(0, 5, 0, 5)
         bar = QProgressBar()
+        bar.setMinimumWidth(96)
+        bar.setFixedHeight(16)
         bar.setRange(0, 100)
         bar.setValue(int(value))
         bar.setFormat(f"{int(value)}%")
@@ -851,8 +998,7 @@ class MainWindow(QMainWindow):
             if item and item.data(Qt.UserRole) == task_id:
                 self.task_table.selectRow(row)
                 break
-        self.gantt.selected_task_id = task_id
-        self.gantt.viewport().update()
+        self.gantt.set_selected_task(task_id)
 
     def edit_task_by_id(self, task_id: str) -> None:
         self.select_task_by_id(task_id)
