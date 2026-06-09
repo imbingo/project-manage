@@ -85,8 +85,8 @@ def test_main_window_project_task_daily_workflow(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "TaskDialog", FakeDialog)
     window.add_task()
     assert len(project.tasks) == 1
-    assert window.task_table.rowCount() == 1
-    window.task_table.selectRow(0)
+    assert len(window.plan.rows) == 1
+    window.select_task_by_id(project.tasks[0].id)
     window.edit_task()
     assert project.tasks[0].title == "任务 A2"
     assert project.tasks[0].duration == 5
@@ -128,7 +128,7 @@ def test_main_window_project_task_daily_workflow(tmp_path, monkeypatch):
     window.log_table.selectRow(0)
     window.delete_daily()
     assert project.dailyLogs == []
-    window.task_table.selectRow(0)
+    window.select_task_by_id(project.tasks[0].id)
     window.delete_task()
     assert project.tasks == []
     window.delete_project()

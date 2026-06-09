@@ -10,11 +10,13 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from .metrics import add_days, project_progress, task_end_date
-from .models import DailyLog, ProgressEntry, Project, Task, Workspace, new_id, to_dict, today
+from .models import ArchiveItem, DailyLog, InboxTask, ProgressEntry, Project, Task, Workspace, new_id, to_dict, today, APP_VERSION
 
 LOCAL_KEYS = ("project-desk-local-v5", "project-desk-local-v4", "project-desk-v3")
 RISKS = {"H", "M", "L"}
 STATUSES = {"Open", "Ongoing", "Closed"}
+ARCHIVE_TYPES = {"实验数据", "汇报PPT", "会议纪要", "图片截图", "交付版本", "其他"}
+INBOX_STATUSES = {"待处理", "已转任务", "已归档", "已建项目", "已忽略"}
 
 
 def pick(source: dict[str, Any], *keys: str, default: Any = None) -> Any:
@@ -71,11 +73,18 @@ def normalize_workspace(raw: Any) -> tuple[Workspace, list[str]]:
         task_ids = {task.id for task in tasks}
         logs: list[DailyLog] = []
         for log_item in pick(item, "dailyLogs", "daily_logs", default=[]):
+            if not isinstance(log_item, dict):
+                continue
             log = _normalize_log(log_item)
             if log.result == "延期" and not log.delayReason:
                 diagnostics.append(f"项目 {index} 有延期日报缺少原因，已标记为待补充。")
-            if log.taskId in task_ids:
+            if not task_ids or log.taskId in task_ids:
                 logs.append(log)
+        archives = [
+            _normalize_archive(archive)
+            for archive in pick(item, "archives", "archiveItems", "archive_items", default=[])
+            if isinstance(archive, dict)
+        ]
         project = Project(
             id=str(pick(item, "id", default=new_id())),
             name=str(pick(item, "name", "title", default="未命名项目")),
@@ -87,16 +96,25 @@ def normalize_workspace(raw: Any) -> tuple[Workspace, list[str]]:
             publicSlug=str(pick(item, "publicSlug", "public_slug", default="")),
             tasks=tasks,
             dailyLogs=logs,
+            archives=archives,
         )
         projects.append(project)
     selected_project_id = str(pick(payload, "selectedProjectId", "selected_project_id", default=projects[0].id))
     if selected_project_id not in {project.id for project in projects}:
         selected_project_id = projects[0].id
+    inbox_tasks = [
+        _normalize_inbox(item)
+        for item in pick(payload, "inboxTasks", "inbox_tasks", "temporaryTasks", "temporary_tasks", default=[])
+        if isinstance(item, dict)
+    ]
     workspace = Workspace(
         selectedProjectId=selected_project_id,
         selectedDate=clean_date(pick(payload, "selectedDate", "selected_date")),
         projects=projects,
+        inboxTasks=inbox_tasks,
+        version=str(pick(payload, "version", default=APP_VERSION)),
     )
+    diagnostics.append(f"归一化项目 {len(projects)} 个、临时任务 {len(inbox_tasks)} 条。")
     return workspace, diagnostics
 
 
@@ -132,6 +150,9 @@ def _normalize_task(item: dict[str, Any], payload: dict[str, Any]) -> Task:
         status=status if status in STATUSES else "Open",
         completedDate=clean_date(pick(item, "completedDate", "completed_date"), ""),
         note=str(pick(item, "note", "remark", default="")),
+        archivePath=str(pick(item, "archivePath", "archive_path", "filePath", "file_path", default="")),
+        archiveType=str(pick(item, "archiveType", "archive_type", default="实验数据")),
+        archiveKeywords=str(pick(item, "archiveKeywords", "archive_keywords", "keywords", default="")),
         progressEntries=entries,
     )
 
@@ -151,12 +172,44 @@ def _normalize_log(item: dict[str, Any]) -> DailyLog:
     )
 
 
+def _normalize_archive(item: dict[str, Any]) -> ArchiveItem:
+    item_type = str(pick(item, "type", "archiveType", "archive_type", default="其他"))
+    return ArchiveItem(
+        id=str(pick(item, "id", default=new_id())),
+        date=clean_date(pick(item, "date", "archiveDate", "archive_date")),
+        type=item_type if item_type in ARCHIVE_TYPES else "其他",
+        title=str(pick(item, "title", "name", default="未命名档案")),
+        owner=str(pick(item, "owner", "responsible", default="")),
+        keywords=str(pick(item, "keywords", "tags", default="")),
+        summary=str(pick(item, "summary", "note", default="")),
+        path=str(pick(item, "path", "filePath", "file_path", default="")),
+        relatedTaskId=str(pick(item, "relatedTaskId", "related_task_id", default="")),
+        status=str(pick(item, "status", default="已归档")),
+    )
+
+
+def _normalize_inbox(item: dict[str, Any]) -> InboxTask:
+    status = str(pick(item, "status", default="待处理"))
+    return InboxTask(
+        id=str(pick(item, "id", default=new_id())),
+        createdDate=clean_date(pick(item, "createdDate", "created_date", "date")),
+        title=str(pick(item, "title", "name", default="")),
+        description=str(pick(item, "description", "note", "summary", default="")),
+        source=str(pick(item, "source", default="")),
+        status=status if status in INBOX_STATUSES else "待处理",
+        suggestedAction=str(pick(item, "suggestedAction", "suggested_action", default="")),
+        suggestedProjectId=str(pick(item, "suggestedProjectId", "suggested_project_id", default="")),
+        suggestionReason=str(pick(item, "suggestionReason", "suggestion_reason", default="")),
+        confirmed=bool(pick(item, "confirmed", default=False)),
+    )
+
+
 def load_workspace_json(path: Path) -> tuple[Workspace, list[str]]:
     return normalize_workspace(json.loads(path.read_text(encoding="utf-8-sig")))
 
 
 def dump_workspace_json(workspace: Workspace, path: Path) -> None:
-    payload = {"version": "project-desk-local-v1", "workspace": to_dict(workspace)}
+    payload = {"version": APP_VERSION, "workspace": to_dict(workspace)}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -218,6 +271,17 @@ def export_project_excel(project: Project, path: Path) -> None:
         style_row(ws.max_row)
 
     ws.append([])
+    archive_header_row = ws.max_row + 1
+    ws.append(["档案日期", "类型", "标题", "负责人", "关键词", "摘要", "路径", "状态"])
+    for cell in ws[archive_header_row]:
+        cell.fill = header_fill
+        cell.font = Font(bold=True)
+    style_row(archive_header_row)
+    for archive in project.archives:
+        ws.append([archive.date, archive.type, archive.title, archive.owner, archive.keywords, archive.summary, archive.path, archive.status])
+        style_row(ws.max_row)
+
+    ws.append([])
     dates = _gantt_dates(project)
     gantt_header_row = ws.max_row + 1
     ws.append(["任务", "负责人", "风险", "实际%", *[item[5:] for item in dates]])
@@ -236,7 +300,7 @@ def export_project_excel(project: Project, path: Path) -> None:
                 ws.cell(ws.max_row, index).fill = green_fill if task.completedDate and date_value <= task.completedDate else blue_fill
         style_row(ws.max_row)
 
-    widths = {1: 22, 2: 34, 3: 16, 4: 14, 5: 10, 6: 12, 7: 12, 8: 10, 9: 10, 10: 14, 11: 28}
+    widths = {1: 22, 2: 34, 3: 16, 4: 14, 5: 16, 6: 36, 7: 44, 8: 14, 9: 14, 10: 14, 11: 32}
     for index, width in widths.items():
         ws.column_dimensions[get_column_letter(index)].width = width
     for index in range(12, ws.max_column + 1):

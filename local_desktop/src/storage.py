@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .import_export import normalize_workspace
-from .models import Workspace, sample_workspace, to_dict
+from .models import APP_VERSION, Workspace, sample_workspace, to_dict
 
 
 def data_dir() -> Path:
@@ -48,5 +48,6 @@ def save_workspace(workspace: Workspace) -> None:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         shutil.copy2(path, data_dir() / "backups" / f"workspace-{stamp}.json")
     temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps({"version": "project-desk-local-v1", "workspace": to_dict(workspace)}, ensure_ascii=False, indent=2), encoding="utf-8")
+    workspace.version = APP_VERSION
+    temp.write_text(json.dumps({"version": APP_VERSION, "workspace": to_dict(workspace)}, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(path)
