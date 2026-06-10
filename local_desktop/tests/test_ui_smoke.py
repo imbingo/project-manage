@@ -20,6 +20,8 @@ def test_main_window_initializes(tmp_path, monkeypatch):
     window = MainWindow()
     assert window.windowTitle() == "Project Desk Local"
     assert window.project_select.count() >= 1
+    assert window.main_stack.count() == 8
+    assert set(window.page_by_name) == {"总览", "任务计划", "临时任务", "项目档案", "任务表格", "日报记录", "风险看板", "数据中心"}
     assert window.plan.rows
     assert window.plan.dates
     assert len(window.plan.dates) >= 28
@@ -37,5 +39,22 @@ def test_main_window_initializes(tmp_path, monkeypatch):
         assert window.plan.day_width >= 44
         assert window.plan.horizontalScrollBar().pageStep() >= 1
         assert window.plan.viewport().width() > window.plan.left_width
+    window.close()
+    app.quit()
+
+
+def test_sidebar_entries_switch_to_main_pages(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from local_desktop.src.app import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    for name in ["总览", "任务计划", "临时任务", "项目档案", "任务表格", "日报记录", "风险看板", "数据中心"]:
+        window.sidebar._handle_click(name)
+        app.processEvents()
+        assert window.sidebar.active_name == name
+        assert window.main_stack.currentWidget() is window.page_by_name[name]
     window.close()
     app.quit()

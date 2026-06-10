@@ -41,7 +41,7 @@ def test_main_window_project_task_daily_workflow(tmp_path, monkeypatch):
     import local_desktop.src.app as app_module
 
     app, window = app_window(tmp_path, monkeypatch)
-    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+    monkeypatch.setattr(app_module, "ask_yes_no", lambda *args, **kwargs: True)
 
     FakeDialog.queue = [
         {"name": "项目 B", "deadline": "2026-06-30", "summary": "总结", "topRisk": "风险", "nextStep": "计划"},
@@ -80,6 +80,7 @@ def test_main_window_project_task_daily_workflow(tmp_path, monkeypatch):
             "note": "更新",
             "plannedProgress": 50,
             "actualProgress": 30,
+            "_progressChanged": True,
         },
     ]
     monkeypatch.setattr(app_module, "TaskDialog", FakeDialog)
@@ -184,5 +185,104 @@ def test_main_window_import_export_file_actions(tmp_path, monkeypatch):
     assert json_path.exists() and "导入项目" in json_path.read_text(encoding="utf-8")
     assert csv_path.exists() and csv_path.stat().st_size > 0
     assert xlsx_path.exists() and xlsx_path.stat().st_size > 1000
+    window.close()
+    app.quit()
+
+
+def test_duplicate_daily_log_does_not_silently_overwrite(tmp_path, monkeypatch):
+    import local_desktop.src.app as app_module
+
+    app, window = app_window(tmp_path, monkeypatch)
+    project = window.current_project()
+    task = project.tasks[0]
+    existing_text = project.dailyLogs[0].actualText
+    FakeDialog.queue = [
+        {
+            "taskId": task.id,
+            "date": project.dailyLogs[0].date,
+            "responsible": "A",
+            "planText": "duplicate",
+            "actualText": "should not overwrite",
+            "plannedProgress": 50,
+            "actualProgress": 50,
+            "result": "部分完成",
+            "delayReason": "",
+        },
+        {
+            "taskId": task.id,
+            "date": "2026-06-11",
+            "responsible": "A",
+            "planText": "new",
+            "actualText": "new actual",
+            "plannedProgress": 50,
+            "actualProgress": 50,
+            "result": "部分完成",
+            "delayReason": "",
+        },
+    ]
+    monkeypatch.setattr(app_module, "DailyDialog", FakeDialog)
+    monkeypatch.setattr(app_module, "ask_yes_no", lambda *args, **kwargs: False)
+    window.add_daily("2026-06-11")
+    assert project.dailyLogs[0].actualText == existing_text
+    assert any(log.date == "2026-06-11" for log in project.dailyLogs)
+    window.close()
+    app.quit()
+
+
+def test_report_pages_support_all_project_scope(tmp_path, monkeypatch):
+    from local_desktop.src.models import DailyLog, Project, ProgressEntry, Task
+
+    app, window = app_window(tmp_path, monkeypatch)
+    other_task = Task(
+        title="外部风险任务",
+        risk="H",
+        startDate="2026-01-01",
+        duration=1,
+        progressEntries=[ProgressEntry(entryDate="2026-01-01", plannedProgress=100, actualProgress=0)],
+    )
+    other = Project(name="另一个项目", deadline="2026-01-10", tasks=[other_task], dailyLogs=[DailyLog(taskId=other_task.id, date="2026-01-02")])
+    window.workspace.projects.append(other)
+    window.refresh()
+
+    window.sidebar._handle_click("任务表格")
+    window.task_scope_filter.setCurrentIndex(window.task_scope_filter.findData("__all__"))
+    window.render_task_table_page()
+    assert window.task_table_view.rowCount() >= 2
+
+    window.sidebar._handle_click("日报记录")
+    window.daily_scope_filter.setCurrentIndex(window.daily_scope_filter.findData("__all__"))
+    window.render_daily_log_page()
+    assert window.daily_table_view.rowCount() >= 2
+
+    window.sidebar._handle_click("风险看板")
+    window.risk_scope_filter.setCurrentIndex(window.risk_scope_filter.findData("__all__"))
+    window.render_risk_board_page()
+    assert any(window.risk_table_view.item(row, 0).text() == "另一个项目" for row in range(window.risk_table_view.rowCount()))
+    window.close()
+    app.quit()
+
+
+def test_dialog_defaults_and_validation(tmp_path, monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QDateEdit, QMessageBox
+    from local_desktop.src.app import DailyDialog, ProjectDialog, TaskDialog
+
+    app = QApplication.instance() or QApplication([])
+    _app, window = app_window(tmp_path, monkeypatch)
+    project = window.current_project()
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: QMessageBox.Ok)
+    project_dialog = ProjectDialog(project)
+    assert isinstance(project_dialog.deadline, QDateEdit)
+    task_dialog = TaskDialog(project, selected_date="2026-06-10")
+    assert task_dialog.risk.currentText() == "M"
+    daily_dialog = DailyDialog(project, selected_date="2026-06-10")
+    daily_dialog.show()
+    daily_dialog.result.setCurrentText("延期")
+    daily_dialog.delay_reason.setPlainText("")
+    daily_dialog.accept()
+    assert daily_dialog.isVisible()
+    project_dialog.close()
+    task_dialog.close()
+    daily_dialog.close()
     window.close()
     app.quit()

@@ -11,6 +11,10 @@ def latest_entry(task: Task) -> ProgressEntry:
     return sorted(task.progressEntries, key=lambda item: item.entryDate)[-1]
 
 
+def progress_entry_on(task: Task, entry_date: str) -> ProgressEntry | None:
+    return next((entry for entry in task.progressEntries if entry.entryDate == entry_date), None)
+
+
 def upsert_progress(task: Task, entry_date: str, planned: int, actual: int) -> None:
     planned = max(0, min(100, int(planned)))
     actual = max(0, min(100, int(actual)))
@@ -64,7 +68,10 @@ def add_task(project: Project, selected_date: str, values: dict) -> Task:
         archiveType=values.get("archiveType", "实验数据"),
         archiveKeywords=values.get("archiveKeywords", ""),
     )
-    upsert_progress(task, selected_date or task.startDate, int(values.get("plannedProgress", 0)), int(values.get("actualProgress", 0)))
+    actual = max(0, min(100, int(values.get("actualProgress", 0))))
+    task.status = "Closed" if actual == 100 else "Ongoing" if actual > 0 else "Open"
+    task.completedDate = (values.get("completedDate") or selected_date or task.startDate) if actual == 100 else ""
+    upsert_progress(task, selected_date or task.startDate, int(values.get("plannedProgress", 0)), actual)
     project.tasks.append(task)
     return task
 
@@ -74,7 +81,22 @@ def update_task(task: Task, selected_date: str, values: dict) -> None:
         if key in values:
             setattr(task, key, values[key])
     task.duration = max(1, int(task.duration or 1))
-    upsert_progress(task, selected_date or task.startDate, int(values.get("plannedProgress", 0)), int(values.get("actualProgress", 0)))
+    if "actualProgress" in values:
+        actual = max(0, min(100, int(values["actualProgress"])))
+        task.status = "Closed" if actual == 100 else "Ongoing" if actual > 0 else "Open"
+        task.completedDate = (values.get("completedDate") or selected_date or today()) if actual == 100 else ""
+    entry_date = selected_date or task.startDate
+    existing = progress_entry_on(task, entry_date)
+    should_write_progress = bool(values.get("_progressChanged"))
+    if existing and ("plannedProgress" in values or "actualProgress" in values):
+        planned = int(values.get("plannedProgress", existing.plannedProgress))
+        actual = int(values.get("actualProgress", existing.actualProgress))
+        should_write_progress = should_write_progress or planned != existing.plannedProgress or actual != existing.actualProgress
+    if should_write_progress:
+        fallback = existing or latest_entry(task)
+        planned = int(values.get("plannedProgress", fallback.plannedProgress))
+        actual = int(values.get("actualProgress", fallback.actualProgress))
+        upsert_progress(task, entry_date, planned, actual)
 
 
 def delete_task(project: Project, task_id: str) -> set[str]:
@@ -130,9 +152,11 @@ def delete_daily_log(project: Project, log_id: str) -> None:
 
 def merge_workspace(target: Workspace, incoming: Workspace) -> None:
     first_new_project_id = None
+    project_ids: dict[str, str] = {}
     for project in incoming.projects:
         old_project_id = project.id
         project.id = str(uuid4())
+        project_ids[old_project_id] = project.id
         first_new_project_id = first_new_project_id or project.id
         task_ids = {}
         for task in project.tasks:
@@ -145,11 +169,18 @@ def merge_workspace(target: Workspace, incoming: Workspace) -> None:
         for log in project.dailyLogs:
             log.id = str(uuid4())
             log.taskId = task_ids.get(log.taskId, log.taskId)
+        for archive in project.archives:
+            archive.id = str(uuid4())
+            archive.relatedTaskId = task_ids.get(archive.relatedTaskId, archive.relatedTaskId)
         if project.publicSlug:
             project.publicSlug = f"{project.publicSlug}-{project.id[:6]}"
         target.projects.append(project)
         if incoming.selectedProjectId == old_project_id:
             first_new_project_id = project.id
+    for item in incoming.inboxTasks:
+        item.id = str(uuid4())
+        item.suggestedProjectId = project_ids.get(item.suggestedProjectId, item.suggestedProjectId)
+        target.inboxTasks.append(item)
     if first_new_project_id:
         target.selectedProjectId = first_new_project_id
     target.selectedDate = incoming.selectedDate or target.selectedDate
@@ -171,6 +202,11 @@ def archive_type_from_text(text: str) -> str:
         if any(key.lower() in lowered for key in keys):
             return item_type
     return "其他"
+
+
+def text_bigrams(value: str) -> set[str]:
+    compact = "".join(char.lower() for char in value if not char.isspace())
+    return {compact[index:index + 2] for index in range(max(0, len(compact) - 1))}
 
 
 def add_archive(project: Project, values: dict) -> ArchiveItem:
@@ -223,6 +259,7 @@ def delete_inbox_task(workspace: Workspace, item_id: str) -> None:
 
 def suggest_inbox_task(workspace: Workspace, item: InboxTask) -> InboxTask:
     text = f"{item.title} {item.description}".lower()
+    inbox_bigrams = text_bigrams(text)
     best_project = None
     best_score = 0
     for project in workspace.projects:
@@ -231,9 +268,13 @@ def suggest_inbox_task(workspace: Workspace, item: InboxTask) -> InboxTask:
         candidates += [archive.keywords for archive in project.archives]
         score = 0
         for candidate in candidates:
-            for token in str(candidate).lower().replace("_", " ").replace("-", " ").split():
+            candidate_text = str(candidate).lower()
+            for token in candidate_text.replace("_", " ").replace("-", " ").split():
                 if len(token) >= 2 and token in text:
                     score += 1
+            common_bigrams = inbox_bigrams & text_bigrams(candidate_text)
+            if common_bigrams:
+                score += min(6, len(common_bigrams))
         if project.name.lower() in text:
             score += 5
         if score > best_score:

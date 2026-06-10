@@ -7,7 +7,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json, normalize_workspace
+from openpyxl import load_workbook
+
+from src.import_export import dump_workspace_json, export_project_excel, export_tasks_csv, is_gantt_truncated, load_workspace_json, normalize_workspace
 from src.models import DailyLog, ProgressEntry, Project, Task, Workspace
 
 
@@ -110,6 +112,17 @@ def test_export_excel(tmp_path):
     export_project_excel(project, path)
     assert path.exists()
     assert path.stat().st_size > 1000
+
+
+def test_export_excel_marks_truncated_gantt(tmp_path):
+    task = Task(id="t1", title="长周期任务", startDate="2026-01-01", duration=150)
+    project = Project(id="p1", name="长项目", tasks=[task])
+    path = tmp_path / "long.xlsx"
+    assert is_gantt_truncated(project)
+    export_project_excel(project, path)
+    workbook = load_workbook(path)
+    values = [cell.value for row in workbook.active.iter_rows() for cell in row if cell.value]
+    assert any("超过 120 天" in str(value) for value in values)
 
 
 def test_json_and_csv_export_round_trip(tmp_path):

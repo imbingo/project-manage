@@ -6,7 +6,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.models import DailyLog, Project, Task, Workspace
+from src.models import ArchiveItem, DailyLog, InboxTask, ProgressEntry, Project, Task, Workspace
 from src.operations import (
     add_project,
     add_task,
@@ -40,7 +40,7 @@ def test_task_crud_and_child_delete_cascade():
     parent = add_task(project, "2026-05-06", {"title": "Parent", "startDate": "2026-05-06", "duration": 4, "plannedProgress": 20, "actualProgress": 10})
     child = add_task(project, "2026-05-06", {"title": "Child", "parentId": parent.id, "startDate": "2026-05-07", "duration": 2})
     project.dailyLogs.append(DailyLog(taskId=child.id, date="2026-05-07"))
-    update_task(parent, "2026-05-08", {"title": "Parent2", "duration": 5, "plannedProgress": 50, "actualProgress": 30})
+    update_task(parent, "2026-05-08", {"title": "Parent2", "duration": 5, "plannedProgress": 50, "actualProgress": 30, "_progressChanged": True})
     assert parent.title == "Parent2"
     assert parent.duration == 5
     assert latest_entry(parent).entryDate == "2026-05-08"
@@ -86,8 +86,10 @@ def test_merge_workspace_remaps_project_task_and_log_ids():
     target = Workspace(selectedProjectId="p1", selectedDate="2026-05-01", projects=[target_project])
     parent = Task(id="t1", title="Parent")
     child = Task(id="t2", title="Child", parentId="t1")
-    incoming_project = Project(id="p1", name="Incoming", tasks=[parent, child], dailyLogs=[DailyLog(id="l1", taskId="t2")])
-    incoming = Workspace(selectedProjectId="p1", selectedDate="2026-05-06", projects=[incoming_project])
+    archive = ArchiveItem(id="a1", title="Archive", relatedTaskId="t2")
+    incoming_project = Project(id="p1", name="Incoming", tasks=[parent, child], dailyLogs=[DailyLog(id="l1", taskId="t2")], archives=[archive])
+    inbox = InboxTask(id="i1", title="Inbox", suggestedProjectId="p1")
+    incoming = Workspace(selectedProjectId="p1", selectedDate="2026-05-06", projects=[incoming_project], inboxTasks=[inbox])
     merge_workspace(target, incoming)
     assert len(target.projects) == 2
     merged = target.projects[1]
@@ -95,4 +97,22 @@ def test_merge_workspace_remaps_project_task_and_log_ids():
     assert {task.id for task in merged.tasks}.isdisjoint({"t1", "t2"})
     assert merged.tasks[1].parentId == merged.tasks[0].id
     assert merged.dailyLogs[0].taskId == merged.tasks[1].id
+    assert merged.archives[0].id != "a1"
+    assert merged.archives[0].relatedTaskId == merged.tasks[1].id
+    assert target.inboxTasks[0].id != "i1"
+    assert target.inboxTasks[0].suggestedProjectId == merged.id
     assert target.selectedProjectId == merged.id
+
+
+def test_update_task_does_not_pollute_history_when_progress_unchanged():
+    task = Task(
+        title="Task",
+        startDate="2026-06-01",
+        progressEntries=[
+            ProgressEntry(entryDate="2026-06-01", plannedProgress=10, actualProgress=10),
+            ProgressEntry(entryDate="2026-06-09", plannedProgress=80, actualProgress=80),
+        ],
+    )
+    update_task(task, "2026-06-02", {"title": "Renamed", "plannedProgress": 80, "actualProgress": 80, "_progressChanged": False})
+    assert task.title == "Renamed"
+    assert {entry.entryDate for entry in task.progressEntries} == {"2026-06-01", "2026-06-09"}

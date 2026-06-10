@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QPoint, QRectF, QSize, Qt
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
+from PySide6.QtCore import QDate, QLockFile, QPoint, QRectF, QSize, Qt, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractScrollArea,
     QApplication,
+    QCheckBox,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -42,7 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json
+from .import_export import dump_workspace_json, export_project_excel, export_tasks_csv, is_gantt_truncated, load_workspace_json
 from .metrics import add_days, days_between, overdue_count, project_progress, task_end_date
 from .models import ArchiveItem, DailyLog, InboxTask, ProgressEntry, Project, Task, Workspace, today, APP_VERSION
 from .operations import (
@@ -65,6 +67,7 @@ from .operations import (
     suggest_inbox_task,
     accept_inbox_suggestion,
     archive_type_from_text,
+    progress_entry_on,
 )
 from .storage import data_dir, load_workspace, save_workspace
 
@@ -149,6 +152,8 @@ def localize_dialog_buttons(buttons: QDialogButtonBox) -> None:
         QDialogButtonBox.Ok: "确定",
         QDialogButtonBox.Cancel: "取消",
         QDialogButtonBox.Close: "关闭",
+        QDialogButtonBox.Yes: "是",
+        QDialogButtonBox.No: "否",
     }
     for role, text in labels.items():
         button = buttons.button(role)
@@ -169,13 +174,41 @@ def date_edit_text(edit: QDateEdit) -> str:
     return edit.date().toString("yyyy-MM-dd")
 
 
+def ask_yes_no(parent: QWidget | None, title: str, text: str) -> bool:
+    message = QMessageBox(parent)
+    message.setWindowTitle(title)
+    message.setText(text)
+    yes = message.addButton("是", QMessageBox.YesRole)
+    message.addButton("否", QMessageBox.NoRole)
+    message.setDefaultButton(yes)
+    message.exec()
+    return message.clickedButton() == yes
+
+
+def safe_default_filename(value: str, fallback: str = "project") -> str:
+    cleaned = "".join("_" if char in '\\/:*?"<>|' else char for char in value).strip(" .")
+    return cleaned or fallback
+
+
+def open_local_path(path: Path) -> None:
+    if not path.exists():
+        raise FileNotFoundError(str(path))
+    if path.is_dir():
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        return
+    if sys.platform.startswith("win"):
+        subprocess.Popen(["explorer", f"/select,{path}"])
+    else:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
+
 class ProjectDialog(QDialog):
     def __init__(self, project: Project | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("项目设置" if project else "新增项目")
         self.resize(560, 430)
         self.name = QLineEdit(project.name if project else "")
-        self.deadline = QLineEdit(project.deadline if project else today())
+        self.deadline = make_date_edit(project.deadline if project else today())
         self.summary = QTextEdit(project.summary if project else "")
         self.top_risk = QTextEdit(project.topRisk if project else "")
         self.next_step = QTextEdit(project.nextStep if project else "")
@@ -197,7 +230,7 @@ class ProjectDialog(QDialog):
     def values(self) -> dict:
         return {
             "name": self.name.text().strip() or "未命名项目",
-            "deadline": self.deadline.text().strip() or today(),
+            "deadline": date_edit_text(self.deadline),
             "summary": self.summary.toPlainText().strip(),
             "topRisk": self.top_risk.toPlainText().strip(),
             "nextStep": self.next_step.toPlainText().strip(),
@@ -216,6 +249,8 @@ class TaskDialog(QDialog):
                 self.parent_task.addItem(item.title, item.id)
         self.risk = QComboBox()
         self.risk.addItems(["H", "M", "L"])
+        if not task:
+            self.risk.setCurrentText("M")
         self.title = QLineEdit(task.title if task else "")
         self.responsible = QLineEdit(task.responsible if task else "")
         self.start = make_date_edit(task.startDate if task else (selected_date or today()))
@@ -225,7 +260,15 @@ class TaskDialog(QDialog):
         self.status = QComboBox()
         for label, value in STATUS_OPTIONS:
             self.status.addItem(label, value)
-        self.completed = QLineEdit(task.completedDate if task else "")
+        completed_checked = bool(task and (task.completedDate or task.status == "Closed"))
+        self.completed_enabled = QCheckBox("填写完成日")
+        self.completed_enabled.setChecked(completed_checked)
+        self.completed = make_date_edit(task.completedDate if task and task.completedDate else (selected_date or today()))
+        self.completed.setEnabled(completed_checked)
+        self.completed_enabled.toggled.connect(self.completed.setEnabled)
+        completed_row = QHBoxLayout()
+        completed_row.addWidget(self.completed_enabled)
+        completed_row.addWidget(self.completed, 1)
         self.note = QTextEdit(task.note if task else "")
         self.note.setFixedHeight(82)
         self.archive_type = QComboBox()
@@ -244,13 +287,17 @@ class TaskDialog(QDialog):
         archive_path_row.addWidget(browse_dir)
         if task:
             self.archive_type.setCurrentText(getattr(task, "archiveType", "实验数据") or "实验数据")
-        progress = latest_entry(task) if task else ProgressEntry(entryDate=selected_date or today())
+        current_entry = progress_entry_on(task, selected_date) if task else None
+        progress = current_entry or (latest_entry(task) if task else ProgressEntry(entryDate=selected_date or today()))
+        self._initial_planned = progress.plannedProgress
+        self._initial_actual = progress.actualProgress
         self.planned = QSpinBox()
         self.planned.setRange(0, 100)
         self.planned.setValue(progress.plannedProgress)
         self.actual = QSpinBox()
         self.actual.setRange(0, 100)
         self.actual.setValue(progress.actualProgress)
+        self.actual.valueChanged.connect(self._sync_completed_from_actual)
         if task:
             self.parent_task.setCurrentIndex(max(0, self.parent_task.findData(task.parentId or "")))
             self.risk.setCurrentText(task.risk)
@@ -266,7 +313,7 @@ class TaskDialog(QDialog):
         form.addRow("状态", self.status)
         form.addRow("计划%", self.planned)
         form.addRow("实际%", self.actual)
-        form.addRow("实际完成日", self.completed)
+        form.addRow("实际完成日", completed_row)
         form.addRow("备注", self.note)
         form.addRow("归档类型", self.archive_type)
         form.addRow("归档关键词", self.archive_keywords)
@@ -276,6 +323,12 @@ class TaskDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    def _sync_completed_from_actual(self, value: int) -> None:
+        if value == 100 and not self.completed_enabled.isChecked():
+            self.completed_enabled.setChecked(True)
+        elif value < 100 and self.completed_enabled.isChecked():
+            self.completed_enabled.setChecked(False)
 
     def browse_archive_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "选择归档文件", "", "All Files (*.*)")
@@ -296,13 +349,14 @@ class TaskDialog(QDialog):
             "startDate": date_edit_text(self.start),
             "duration": self.duration.value(),
             "status": self.status.currentData() or "Open",
-            "completedDate": self.completed.text().strip(),
+            "completedDate": date_edit_text(self.completed) if self.completed_enabled.isChecked() or self.actual.value() == 100 else "",
             "note": self.note.toPlainText().strip(),
             "archivePath": self.archive_path.text().strip(),
             "archiveType": self.archive_type.currentText(),
             "archiveKeywords": self.archive_keywords.text().strip(),
             "plannedProgress": self.planned.value(),
             "actualProgress": self.actual.value(),
+            "_progressChanged": self.planned.value() != self._initial_planned or self.actual.value() != self._initial_actual,
         }
 
 
@@ -349,6 +403,13 @@ class DailyDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    def accept(self) -> None:
+        if self.result.currentText() == "延期" and not self.delay_reason.toPlainText().strip():
+            QMessageBox.warning(self, "请补充延期原因", "日报结果为延期时，必须填写延期原因。")
+            self.delay_reason.setFocus()
+            return
+        super().accept()
 
     def values(self) -> dict:
         return {
@@ -901,8 +962,30 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_plan_panel(), 3)
         layout.addWidget(self._build_bottom_area(), 0)
         self.overview_page = self._build_overview_page()
+        self.archive_page = self._build_archive_page()
+        self.inbox_page = self._build_inbox_page()
+        self.task_table_page = self._build_task_table_page()
+        self.daily_log_page = self._build_daily_log_page()
+        self.risk_board_page = self._build_risk_board_page()
+        self.data_center_page = self._build_data_center_page()
+        self.page_by_name = {
+            "任务计划": self.task_page,
+            "总览": self.overview_page,
+            "项目档案": self.archive_page,
+            "临时任务": self.inbox_page,
+            "任务表格": self.task_table_page,
+            "日报记录": self.daily_log_page,
+            "风险看板": self.risk_board_page,
+            "数据中心": self.data_center_page,
+        }
         self.main_stack.addWidget(self.task_page)
         self.main_stack.addWidget(self.overview_page)
+        self.main_stack.addWidget(self.archive_page)
+        self.main_stack.addWidget(self.inbox_page)
+        self.main_stack.addWidget(self.task_table_page)
+        self.main_stack.addWidget(self.daily_log_page)
+        self.main_stack.addWidget(self.risk_board_page)
+        self.main_stack.addWidget(self.data_center_page)
         root_layout.addWidget(self.main_stack, 1)
         self.setCentralWidget(root)
 
@@ -938,10 +1021,10 @@ class MainWindow(QMainWindow):
 
         add_task = QPushButton("新增任务")
         add_task.setObjectName("primary")
-        add_task.clicked.connect(self.add_task)
+        add_task.clicked.connect(lambda _checked=False: self.add_task(today()))
         add_daily = QPushButton("写日报")
         add_daily.setObjectName("alt")
-        add_daily.clicked.connect(self.add_daily)
+        add_daily.clicked.connect(lambda _checked=False: self.add_daily(today()))
         top_layout.addWidget(add_task)
         top_layout.addWidget(add_daily)
         top_layout.addWidget(self._menu_button("项目", [("项目设置", self.edit_project), ("新增项目", self.add_project), ("删除项目", self.delete_project)]))
@@ -1147,6 +1230,200 @@ class MainWindow(QMainWindow):
         layout.addWidget(panel, 1)
         return page
 
+    def _feature_page(self, title: str, desc: str) -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        hero = QFrame()
+        hero.setObjectName("topbar")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(22, 18, 22, 18)
+        eyebrow = QLabel("Project Desk Local")
+        eyebrow.setStyleSheet("color:#2563eb;font-weight:900;font-size:12px;")
+        heading = QLabel(title)
+        heading.setStyleSheet("font-size:26px;font-weight:900;")
+        body = QLabel(desc)
+        body.setWordWrap(True)
+        body.setStyleSheet("color:#64748b;")
+        hero_layout.addWidget(eyebrow)
+        hero_layout.addWidget(heading)
+        hero_layout.addWidget(body)
+        layout.addWidget(hero)
+        panel = QFrame()
+        panel.setObjectName("panel")
+        self._add_shadow(panel)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(18, 14, 18, 16)
+        layout.addWidget(panel, 1)
+        return page, panel_layout
+
+    def _build_archive_page(self) -> QWidget:
+        page, layout = self._feature_page("项目档案", "按项目集中展示实验数据、汇报PPT、会议纪要、图片截图和交付版本；支持跨项目关键词搜索。")
+        search_row = QHBoxLayout()
+        self.archive_search_input = QLineEdit()
+        self.archive_search_input.setPlaceholderText("搜索档案：项目 / 标题 / 关键词 / 摘要 / 负责人 / 类型 / 路径 / 关联任务")
+        self.archive_search_input.setClearButtonEnabled(True)
+        self.archive_project_filter = QComboBox()
+        self.archive_type_filter = QComboBox()
+        self.archive_type_filter.addItems(["全部类型", "实验数据", "会议纪要", "汇报PPT", "图片截图", "交付版本", "其他"])
+        self.archive_status_filter = QComboBox()
+        self.archive_status_filter.addItems(["全部状态", "已归档", "待补充", "已过期"])
+        self.archive_result_label = QLabel()
+        self.archive_result_label.setStyleSheet("color:#64748b;font-weight:700;")
+        search_row.addWidget(self.archive_search_input, 1)
+        search_row.addWidget(self.archive_project_filter)
+        search_row.addWidget(self.archive_type_filter)
+        search_row.addWidget(self.archive_status_filter)
+        search_row.addWidget(self.archive_result_label)
+        layout.addLayout(search_row)
+
+        self.archive_table = QTableWidget()
+        self.archive_table.setColumnCount(10)
+        self.archive_table.setHorizontalHeaderLabels(["项目", "日期", "类型", "标题", "负责人", "关键词", "摘要/结论", "路径", "状态", "关联任务"])
+        self.archive_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.archive_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.archive_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.archive_table.verticalHeader().setVisible(False)
+        self.archive_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.archive_table, 1)
+        self.archive_empty = QLabel("暂无档案。可以点击“新增档案”，或在任务详情里填写归档路径后自动生成档案记录。")
+        self.archive_empty.setAlignment(Qt.AlignCenter)
+        self.archive_empty.setStyleSheet("background:#f8fafc;border:1px dashed #cbd5e1;border-radius:14px;padding:20px;color:#64748b;font-weight:800;")
+        layout.addWidget(self.archive_empty, 1)
+
+        buttons = QHBoxLayout()
+        self.archive_add_button = QPushButton("新增档案")
+        self.archive_add_button.setObjectName("primary")
+        self.archive_edit_button = QPushButton("编辑档案")
+        self.archive_delete_button = QPushButton("删除档案")
+        self.archive_open_button = QPushButton("打开路径")
+        self.archive_open_button.setObjectName("alt")
+        for button, handler in [
+            (self.archive_add_button, self.add_archive_item),
+            (self.archive_edit_button, self.edit_archive_item),
+            (self.archive_delete_button, self.delete_archive_item),
+            (self.archive_open_button, self.open_archive_path),
+        ]:
+            button.clicked.connect(handler)
+            buttons.addWidget(button)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+        self.archive_rendered: list[tuple[Project, ArchiveItem]] = []
+        self.archive_search_input.textChanged.connect(lambda _text: self.render_archive_page())
+        self.archive_project_filter.currentIndexChanged.connect(lambda _index: self.render_archive_page())
+        self.archive_type_filter.currentIndexChanged.connect(lambda _index: self.render_archive_page())
+        self.archive_status_filter.currentIndexChanged.connect(lambda _index: self.render_archive_page())
+        self.archive_table.itemSelectionChanged.connect(self.sync_archive_actions)
+        return page
+
+    def _build_inbox_page(self) -> QWidget:
+        page, layout = self._feature_page("临时任务收集箱", "先记录暂时不确定归属的想法、待办、实验线索或资料；系统会基于项目名、任务、关键词判断归属。")
+        self.inbox_table = QTableWidget()
+        self.inbox_table.setColumnCount(8)
+        self.inbox_table.setHorizontalHeaderLabels(["日期", "标题", "说明", "来源", "状态", "建议动作", "建议项目", "建议原因"])
+        self.inbox_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.inbox_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.inbox_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.inbox_table.verticalHeader().setVisible(False)
+        self.inbox_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.inbox_table, 1)
+        self.inbox_empty = QLabel("暂无临时任务。点击“新增临时任务”记录暂时无法归属的事项，后续可转任务、归档或创建项目。")
+        self.inbox_empty.setAlignment(Qt.AlignCenter)
+        self.inbox_empty.setStyleSheet("background:#f8fafc;border:1px dashed #cbd5e1;border-radius:14px;padding:20px;color:#64748b;font-weight:800;")
+        layout.addWidget(self.inbox_empty, 1)
+        buttons = QHBoxLayout()
+        self.inbox_buttons: dict[str, QPushButton] = {}
+        actions = [
+            ("新增临时任务", self.add_inbox_item, "primary"),
+            ("编辑", self.edit_inbox_item, ""),
+            ("删除", self.delete_inbox_item, ""),
+            ("刷新建议", self.suggest_all_inbox, ""),
+            ("采纳建议", self.accept_selected_inbox, "alt"),
+            ("转为当前项目任务", self.inbox_to_current_task, ""),
+            ("手动归档到项目", self.archive_selected_inbox, ""),
+            ("新增项目", self.new_project_from_inbox, ""),
+        ]
+        for label, handler, obj in actions:
+            button = QPushButton(label)
+            if obj:
+                button.setObjectName(obj)
+            button.clicked.connect(handler)
+            buttons.addWidget(button)
+            self.inbox_buttons[label] = button
+        buttons.addStretch()
+        layout.addLayout(buttons)
+        self.inbox_table.itemSelectionChanged.connect(self.sync_inbox_actions)
+        return page
+
+    def _build_scoped_table_page(self, title: str, desc: str, headers: list[str]) -> tuple[QWidget, QComboBox, QTableWidget, QLabel]:
+        page, layout = self._feature_page(title, desc)
+        row = QHBoxLayout()
+        scope = QComboBox()
+        count = QLabel()
+        count.setStyleSheet("color:#64748b;font-weight:700;")
+        row.addWidget(QLabel("范围"))
+        row.addWidget(scope)
+        row.addStretch()
+        row.addWidget(count)
+        layout.addLayout(row)
+        table = QTableWidget()
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table, 1)
+        return page, scope, table, count
+
+    def _build_task_table_page(self) -> QWidget:
+        page, self.task_scope_filter, self.task_table_view, self.task_count_label = self._build_scoped_table_page(
+            "任务表格",
+            "按表格方式查看任务台账，可切换当前项目、全部项目或指定项目。",
+            ["项目", "风险", "任务", "负责人", "开始", "工期", "结束", "状态", "计划", "实际", "完成日", "备注"],
+        )
+        self.task_scope_filter.currentIndexChanged.connect(lambda _index: self.render_task_table_page())
+        return page
+
+    def _build_daily_log_page(self) -> QWidget:
+        page, self.daily_scope_filter, self.daily_table_view, self.daily_count_label = self._build_scoped_table_page(
+            "日报记录",
+            "集中查看日报记录，可切换当前项目、全部项目或指定项目。",
+            ["项目", "日期", "负责人", "任务", "计划完成", "实际完成", "计划", "实际", "结果", "延期原因"],
+        )
+        self.daily_scope_filter.currentIndexChanged.connect(lambda _index: self.render_daily_log_page())
+        return page
+
+    def _build_risk_board_page(self) -> QWidget:
+        page, self.risk_scope_filter, self.risk_table_view, self.risk_count_label = self._build_scoped_table_page(
+            "风险看板",
+            "集中查看高风险、逾期未关闭和进度落后的任务。",
+            ["项目", "关注原因", "风险", "任务", "负责人", "状态", "结束", "进度", "备注"],
+        )
+        self.risk_scope_filter.currentIndexChanged.connect(lambda _index: self.render_risk_board_page())
+        return page
+
+    def _build_data_center_page(self) -> QWidget:
+        page, layout = self._feature_page("数据中心", "导入/导出本地 JSON、CSV、Excel，或打开本地数据目录。")
+        grid = QGridLayout()
+        actions = [
+            ("导入网页版 JSON", self.import_json),
+            ("导出完整 JSON", self.export_json),
+            ("导出当前项目 CSV", self.export_csv),
+            ("导出当前项目 Excel", self.export_excel),
+            ("打开数据目录", self.open_data_dir),
+        ]
+        for index, (label, handler) in enumerate(actions):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            button.setMinimumHeight(48)
+            grid.addWidget(button, index // 2, index % 2)
+        layout.addLayout(grid)
+        layout.addStretch()
+        return page
+
     def _build_bottom_area(self) -> QWidget:
         self.context_tabs = QTabWidget()
         self.context_tabs.setMinimumHeight(238)
@@ -1159,12 +1436,16 @@ class MainWindow(QMainWindow):
         self.selected_date_label = QLabel()
         self.selected_date_label.setStyleSheet("color:#64748b;font-weight:800;")
         log_header.addWidget(self.selected_date_label, 1)
-        for text, handler, obj in [("新增日报", self.add_daily, "alt"), ("编辑日报", self.edit_daily, ""), ("删除日报", self.delete_daily, "")]:
+        for text, handler, obj in [("新增日报", self.add_daily_for_selected_date, "alt"), ("编辑日报", self.edit_daily, ""), ("删除日报", self.delete_daily, "")]:
             button = QPushButton(text)
             if obj:
                 button.setObjectName(obj)
             button.clicked.connect(handler)
             log_header.addWidget(button)
+            if text == "编辑日报":
+                self.log_edit_button = button
+            elif text == "删除日报":
+                self.log_delete_button = button
         log_layout.addLayout(log_header)
         log_layout.addWidget(self._build_log_table(), 1)
 
@@ -1211,6 +1492,7 @@ class MainWindow(QMainWindow):
         self.log_table.setColumnWidth(3, 180)
         self.log_table.setColumnWidth(4, 78)
         self.log_table.setColumnHidden(6, True)
+        self.log_table.itemSelectionChanged.connect(self._sync_log_actions)
         self.log_table.itemDoubleClicked.connect(lambda _item: self.edit_daily())
         return self.log_table
 
@@ -1225,9 +1507,12 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size:17px;font-weight:900;")
         edit = QPushButton("编辑任务")
         edit.clicked.connect(self.edit_task)
+        delete = QPushButton("删除任务")
+        delete.clicked.connect(self.delete_task)
         head.addWidget(title)
         head.addStretch()
         head.addWidget(edit)
+        head.addWidget(delete)
         box.addLayout(head)
         self.detail_title = QLabel("未选择任务")
         self.detail_title.setWordWrap(True)
@@ -1390,596 +1675,437 @@ class MainWindow(QMainWindow):
     def _project_name(self, project_id: str) -> str:
         return next((project.name for project in self.workspace.projects if project.id == project_id), "")
 
-    def open_archive_view(self) -> None:
-        dialog = QDialog(self)
-        dialog.setWindowTitle("项目档案 · 全部项目")
-        dialog.resize(1420, 760)
-        layout = QVBoxLayout(dialog)
-        header = QHBoxLayout()
-        title = QLabel("项目档案")
-        title.setStyleSheet("font-size:20px;font-weight:900;")
-        title.setFixedHeight(30)
-        subtitle = QLabel("按项目集中展示实验数据、汇报PPT、会议纪要、图片截图和交付版本；支持跨项目关键词搜索。")
-        subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color:#64748b;")
-        subtitle.setMaximumHeight(42)
-        title_box = QVBoxLayout()
-        title_box.setSpacing(4)
-        title_box.addWidget(title)
-        title_box.addWidget(subtitle)
-        header.addLayout(title_box, 1)
-        layout.addLayout(header)
+    def _refresh_archive_project_filter(self) -> None:
+        if not hasattr(self, "archive_project_filter"):
+            return
+        current = self.archive_project_filter.currentData()
+        self.archive_project_filter.blockSignals(True)
+        self.archive_project_filter.clear()
+        self.archive_project_filter.addItem("全部项目", "")
+        for project in self.workspace.projects:
+            self.archive_project_filter.addItem(project.name, project.id)
+        index = self.archive_project_filter.findData(current)
+        self.archive_project_filter.setCurrentIndex(max(0, index))
+        self.archive_project_filter.blockSignals(False)
 
-        search_row = QHBoxLayout()
-        search_input = QLineEdit()
-        search_input.setPlaceholderText("搜索档案：项目 / 标题 / 关键词 / 摘要 / 负责人 / 类型 / 路径 / 关联任务")
-        search_input.setClearButtonEnabled(True)
-        search_input.setMinimumHeight(36)
-        project_filter = QComboBox()
-        project_filter.addItem("全部项目", "")
-        for item in self.workspace.projects:
-            project_filter.addItem(item.name, item.id)
-        type_filter = QComboBox()
-        type_filter.addItems(["全部类型", "实验数据", "会议纪要", "汇报PPT", "图片截图", "交付版本", "其他"])
-        status_filter = QComboBox()
-        status_filter.addItems(["全部状态", "待整理", "已归档", "已完成", "待补充", "已废弃", "已过期"])
-        result_label = QLabel()
-        result_label.setStyleSheet("color:#64748b;font-weight:700;")
-        search_row.addWidget(search_input, 1)
-        search_row.addWidget(project_filter)
-        search_row.addWidget(type_filter)
-        search_row.addWidget(status_filter)
-        search_row.addWidget(result_label)
-        layout.addLayout(search_row)
+    def _refresh_scope_filter(self, combo: QComboBox) -> None:
+        current = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("当前项目", "__current__")
+        combo.addItem("全部项目", "__all__")
+        for project in self.workspace.projects:
+            combo.addItem(project.name, project.id)
+        index = combo.findData(current)
+        combo.setCurrentIndex(max(0, index))
+        combo.blockSignals(False)
 
-        table = QTableWidget()
-        table.setColumnCount(10)
-        table.setHorizontalHeaderLabels(["项目", "日期", "类型", "标题", "负责人", "关键词", "摘要/结论", "路径", "状态", "关联任务"])
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SingleSelection)
-        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(table, 1)
-        empty_label = QLabel("暂无档案。可以点击“新增档案”，或在任务详情里填写归档路径后自动生成档案记录。")
-        empty_label.setAlignment(Qt.AlignCenter)
-        empty_label.setStyleSheet("background:#f8fafc;border:1px dashed #cbd5e1;border-radius:14px;padding:20px;color:#64748b;font-weight:800;")
-        layout.addWidget(empty_label, 1)
+    def _projects_for_scope(self, combo: QComboBox) -> list[Project]:
+        scope = combo.currentData()
+        if scope == "__all__":
+            return list(self.workspace.projects)
+        if scope and scope not in {"__current__", ""}:
+            project = next((item for item in self.workspace.projects if item.id == scope), None)
+            return [project] if project else []
+        project = self.current_project()
+        return [project] if project else []
 
-        rendered: list[tuple[Project, ArchiveItem]] = []
-        edit_button: QPushButton | None = None
-        delete_button: QPushButton | None = None
-        open_button: QPushButton | None = None
-
-        def task_name(project: Project, archive: ArchiveItem) -> str:
-            return next((task.title for task in project.tasks if task.id == archive.relatedTaskId), "")
-
-        def render() -> None:
-            keyword = search_input.text().strip().lower()
-            selected_project_id = project_filter.currentData()
-            selected_type = type_filter.currentText()
-            selected_status = status_filter.currentText()
-            rendered.clear()
-            total = 0
-            for project in self.workspace.projects:
-                if selected_project_id and project.id != selected_project_id:
+    def render_archive_page(self) -> None:
+        if not hasattr(self, "archive_table"):
+            return
+        self._refresh_archive_project_filter()
+        keyword = self.archive_search_input.text().strip().lower()
+        selected_project_id = self.archive_project_filter.currentData()
+        selected_type = self.archive_type_filter.currentText()
+        selected_status = self.archive_status_filter.currentText()
+        self.archive_rendered.clear()
+        total = 0
+        for project in self.workspace.projects:
+            if selected_project_id and project.id != selected_project_id:
+                continue
+            for archive in sorted(project.archives, key=lambda item: item.date, reverse=True):
+                total += 1
+                related_task_name = next((task.title for task in project.tasks if task.id == archive.relatedTaskId), "")
+                if selected_type != "全部类型" and archive.type != selected_type:
                     continue
-                for archive in sorted(project.archives, key=lambda item: item.date, reverse=True):
-                    total += 1
-                    related_task_name = task_name(project, archive)
-                    if selected_type != "全部类型" and archive.type != selected_type:
+                if selected_status != "全部状态" and archive.status != selected_status:
+                    continue
+                if keyword:
+                    haystack = " ".join([
+                        project.name, archive.date, archive.type, archive.title, archive.owner,
+                        archive.keywords, archive.summary, archive.path, archive.status, related_task_name,
+                    ]).lower()
+                    if keyword not in haystack:
                         continue
-                    if selected_status != "全部状态" and archive.status != selected_status:
-                        continue
-                    if keyword:
-                        haystack = " ".join([
-                            project.name, archive.date, archive.type, archive.title, archive.owner,
-                            archive.keywords, archive.summary, archive.path, archive.status, related_task_name,
-                        ]).lower()
-                        if keyword not in haystack:
-                            continue
-                    rendered.append((project, archive))
-            table.setRowCount(len(rendered))
-            result_label.setText(f"{len(rendered)} / {total} 条")
-            for row, (project, archive) in enumerate(rendered):
-                values = [project.name, archive.date, archive.type, archive.title, archive.owner, archive.keywords, archive.summary, archive.path, archive.status, task_name(project, archive)]
-                for col, value in enumerate(values):
-                    item = QTableWidgetItem(str(value))
-                    item.setToolTip(str(value))
-                    item.setData(Qt.UserRole, archive.id)
-                    item.setData(Qt.UserRole + 1, project.id)
-                    table.setItem(row, col, item)
-                table.setRowHeight(row, 42)
-            table.resizeColumnsToContents()
-            table.setColumnWidth(0, 180)
-            table.setColumnWidth(3, 240)
-            table.setColumnWidth(6, 260)
-            table.setColumnWidth(7, 260)
-            empty_label.setVisible(not rendered)
-            table.setVisible(bool(rendered))
-            if rendered and table.currentRow() < 0:
-                table.selectRow(0)
-            sync_actions()
+                self.archive_rendered.append((project, archive))
+        table = self.archive_table
+        table.setRowCount(len(self.archive_rendered))
+        self.archive_result_label.setText(f"{len(self.archive_rendered)} / {total} 条")
+        for row, (project, archive) in enumerate(self.archive_rendered):
+            related_task_name = next((task.title for task in project.tasks if task.id == archive.relatedTaskId), "")
+            values = [project.name, archive.date, archive.type, archive.title, archive.owner, archive.keywords, archive.summary, archive.path, archive.status, related_task_name]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
+                item.setData(Qt.UserRole, archive.id)
+                item.setData(Qt.UserRole + 1, project.id)
+                table.setItem(row, col, item)
+            table.setRowHeight(row, 42)
+        table.resizeColumnsToContents()
+        table.setColumnWidth(0, 180)
+        table.setColumnWidth(3, 240)
+        table.setColumnWidth(6, 260)
+        table.setColumnWidth(7, 260)
+        self.archive_empty.setVisible(not self.archive_rendered)
+        table.setVisible(bool(self.archive_rendered))
+        if self.archive_rendered and table.currentRow() < 0:
+            table.selectRow(0)
+        self.sync_archive_actions()
 
-        def sync_actions() -> None:
-            project, archive = selected_archive_pair()
-            has_selection = bool(project and archive)
-            if edit_button:
-                edit_button.setEnabled(has_selection)
-            if delete_button:
-                delete_button.setEnabled(has_selection)
-            if open_button:
-                open_button.setEnabled(bool(archive and archive.path))
+    def selected_archive_pair(self) -> tuple[Project, ArchiveItem] | tuple[None, None]:
+        row = self.archive_table.currentRow()
+        if row < 0 or row >= len(self.archive_rendered):
+            return None, None
+        return self.archive_rendered[row]
 
-        def selected_archive_pair() -> tuple[Project, ArchiveItem] | tuple[None, None]:
-            row = table.currentRow()
-            if row < 0 or row >= len(rendered):
-                return None, None
-            return rendered[row]
+    def sync_archive_actions(self) -> None:
+        project, archive = self.selected_archive_pair()
+        has_selection = bool(project and archive)
+        self.archive_edit_button.setEnabled(has_selection)
+        self.archive_delete_button.setEnabled(has_selection)
+        self.archive_open_button.setEnabled(bool(archive and archive.path))
 
-        def add_item() -> None:
-            selected_project_id = project_filter.currentData()
-            project = next((item for item in self.workspace.projects if item.id == selected_project_id), None)
-            project = project or self.current_project() or (self.workspace.projects[0] if self.workspace.projects else None)
-            if not project:
-                return
-            dlg = ArchiveDialog(project, parent=dialog)
-            if dlg.exec() == QDialog.Accepted:
-                add_archive(project, dlg.values())
-                save_workspace(self.workspace)
-                render()
-                self.refresh()
+    def add_archive_item(self) -> None:
+        selected_project_id = self.archive_project_filter.currentData()
+        project = next((item for item in self.workspace.projects if item.id == selected_project_id), None)
+        project = project or self.current_project() or (self.workspace.projects[0] if self.workspace.projects else None)
+        if not project:
+            return
+        dialog = ArchiveDialog(project, parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            add_archive(project, dialog.values())
+            self.persist()
 
-        def edit_item() -> None:
-            project, archive = selected_archive_pair()
-            if not project or not archive:
-                QMessageBox.information(dialog, "请选择档案", "请先选中一条档案记录。")
-                return
-            dlg = ArchiveDialog(project, archive, dialog)
-            if dlg.exec() == QDialog.Accepted:
-                update_archive(archive, dlg.values())
-                save_workspace(self.workspace)
-                render()
-                self.refresh()
+    def edit_archive_item(self) -> None:
+        project, archive = self.selected_archive_pair()
+        if not project or not archive:
+            return
+        dialog = ArchiveDialog(project, archive, self)
+        if dialog.exec() == QDialog.Accepted:
+            update_archive(archive, dialog.values())
+            self.persist()
 
-        def delete_item() -> None:
-            project, archive = selected_archive_pair()
-            if not project or not archive:
-                QMessageBox.information(dialog, "请选择档案", "请先选中一条档案记录。")
-                return
-            if QMessageBox.question(dialog, "确认删除", f"删除档案“{archive.title}”？") == QMessageBox.Yes:
-                delete_archive(project, archive.id)
-                save_workspace(self.workspace)
-                render()
-                self.refresh()
+    def delete_archive_item(self) -> None:
+        project, archive = self.selected_archive_pair()
+        if not project or not archive:
+            return
+        if ask_yes_no(self, "确认删除", f"删除档案“{archive.title}”？"):
+            delete_archive(project, archive.id)
+            self.persist()
 
-        def open_path() -> None:
-            _project, archive = selected_archive_pair()
-            if not archive or not archive.path:
-                QMessageBox.information(dialog, "没有路径", "该档案没有填写文件或目录路径。")
-                return
-            path = Path(archive.path)
-            if path.exists():
-                subprocess.Popen(["explorer", str(path if path.is_dir() else path.parent)])
-            else:
-                QMessageBox.warning(dialog, "路径不存在", str(path))
+    def open_archive_path(self) -> None:
+        _project, archive = self.selected_archive_pair()
+        if not archive or not archive.path:
+            return
+        try:
+            open_local_path(Path(archive.path))
+        except FileNotFoundError:
+            QMessageBox.warning(self, "路径不存在", archive.path)
 
-        search_input.textChanged.connect(lambda _text: render())
-        project_filter.currentIndexChanged.connect(lambda _index: render())
-        type_filter.currentIndexChanged.connect(lambda _index: render())
-        status_filter.currentIndexChanged.connect(lambda _index: render())
-        table.itemSelectionChanged.connect(sync_actions)
+    def render_inbox_page(self) -> None:
+        if not hasattr(self, "inbox_table"):
+            return
+        items = sorted(self.workspace.inboxTasks, key=lambda value: value.createdDate, reverse=True)
+        self.inbox_table.setRowCount(len(items))
+        for row, item in enumerate(items):
+            values = [item.createdDate, item.title, item.description, item.source, item.status, item.suggestedAction, self._project_name(item.suggestedProjectId), item.suggestionReason]
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                cell.setToolTip(str(value))
+                cell.setData(Qt.UserRole, item.id)
+                self.inbox_table.setItem(row, col, cell)
+            self.inbox_table.setRowHeight(row, 42)
+        self.inbox_table.resizeColumnsToContents()
+        self.inbox_table.setColumnWidth(1, 220)
+        self.inbox_table.setColumnWidth(2, 280)
+        self.inbox_table.setColumnWidth(7, 280)
+        self.inbox_empty.setVisible(not items)
+        self.inbox_table.setVisible(bool(items))
+        if items and self.inbox_table.currentRow() < 0:
+            self.inbox_table.selectRow(0)
+        self.sync_inbox_actions()
 
-        buttons = QHBoxLayout()
-        for label, fn, obj in [("新增档案", add_item, "primary"), ("编辑档案", edit_item, ""), ("删除档案", delete_item, ""), ("打开路径", open_path, "alt")]:
-            button = QPushButton(label)
-            if obj:
-                button.setObjectName(obj)
-            button.clicked.connect(fn)
-            buttons.addWidget(button)
-            if label == "编辑档案":
-                edit_button = button
-            elif label == "删除档案":
-                delete_button = button
-            elif label == "打开路径":
-                open_button = button
-        buttons.addStretch()
-        close = QPushButton("关闭")
-        close.clicked.connect(dialog.accept)
-        buttons.addWidget(close)
-        layout.addLayout(buttons)
-        render()
-        dialog.exec()
+    def selected_inbox_item(self) -> InboxTask | None:
+        row = self.inbox_table.currentRow()
+        if row < 0:
+            return None
+        cell = self.inbox_table.item(row, 0)
+        item_id = cell.data(Qt.UserRole) if cell else None
+        return next((item for item in self.workspace.inboxTasks if item.id == item_id), None)
 
-    def open_inbox_view(self) -> None:
-        dialog = QDialog(self)
-        dialog.setWindowTitle("临时任务收集箱")
-        dialog.resize(1320, 720)
-        layout = QVBoxLayout(dialog)
-        header = QVBoxLayout()
-        header.setSpacing(4)
-        title = QLabel("临时任务收集箱")
-        title.setStyleSheet("font-size:20px;font-weight:900;")
-        title.setFixedHeight(30)
-        desc = QLabel("先记录暂时不确定归属的想法、待办、实验线索或资料；系统会基于项目名、任务、关键词判断：建议归档、转为项目任务，或新增项目。")
-        desc.setWordWrap(True)
-        desc.setStyleSheet("color:#64748b;")
-        desc.setMaximumHeight(42)
-        header.addWidget(title)
-        header.addWidget(desc)
-        layout.addLayout(header)
+    def sync_inbox_actions(self) -> None:
+        has_selection = self.selected_inbox_item() is not None
+        for label, button in self.inbox_buttons.items():
+            if label != "新增临时任务":
+                button.setEnabled(has_selection)
 
-        table = QTableWidget()
-        table.setColumnCount(8)
-        table.setHorizontalHeaderLabels(["日期", "标题", "说明", "来源", "状态", "建议动作", "建议项目", "建议原因"])
-        table.setSelectionBehavior(QTableWidget.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SingleSelection)
-        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(table, 1)
-        empty_label = QLabel("暂无临时任务。点击“新增临时任务”记录暂时无法归属的事项，后续可转任务、归档或创建项目。")
-        empty_label.setAlignment(Qt.AlignCenter)
-        empty_label.setStyleSheet("background:#f8fafc;border:1px dashed #cbd5e1;border-radius:14px;padding:20px;color:#64748b;font-weight:800;")
-        layout.addWidget(empty_label, 1)
-        edit_button: QPushButton | None = None
-        delete_button: QPushButton | None = None
-        accept_button: QPushButton | None = None
-        to_task_button: QPushButton | None = None
-        archive_button: QPushButton | None = None
-        new_project_button: QPushButton | None = None
+    def add_inbox_item(self) -> None:
+        dialog = InboxTaskDialog(parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            item = add_inbox_task(self.workspace, dialog.values())
+            suggest_inbox_task(self.workspace, item)
+            self.persist()
 
-        def render() -> None:
-            table.setRowCount(len(self.workspace.inboxTasks))
-            for row, item in enumerate(sorted(self.workspace.inboxTasks, key=lambda value: value.createdDate, reverse=True)):
-                values = [item.createdDate, item.title, item.description, item.source, item.status, item.suggestedAction, self._project_name(item.suggestedProjectId), item.suggestionReason]
-                for col, value in enumerate(values):
-                    cell = QTableWidgetItem(str(value))
-                    cell.setToolTip(str(value))
-                    cell.setData(Qt.UserRole, item.id)
-                    table.setItem(row, col, cell)
-                table.setRowHeight(row, 42)
-            table.resizeColumnsToContents()
-            table.setColumnWidth(1, 220)
-            table.setColumnWidth(2, 280)
-            table.setColumnWidth(7, 280)
-            empty_label.setVisible(not self.workspace.inboxTasks)
-            table.setVisible(bool(self.workspace.inboxTasks))
-            if self.workspace.inboxTasks and table.currentRow() < 0:
-                table.selectRow(0)
-            sync_actions()
+    def edit_inbox_item(self) -> None:
+        item = self.selected_inbox_item()
+        if not item:
+            return
+        dialog = InboxTaskDialog(item, self)
+        if dialog.exec() == QDialog.Accepted:
+            update_inbox_task(item, dialog.values())
+            suggest_inbox_task(self.workspace, item)
+            self.persist()
 
-        def selected_item() -> InboxTask | None:
-            row = table.currentRow()
-            if row < 0:
-                return None
-            cell = table.item(row, 0)
-            item_id = cell.data(Qt.UserRole) if cell else None
-            return next((item for item in self.workspace.inboxTasks if item.id == item_id), None)
+    def delete_inbox_item(self) -> None:
+        item = self.selected_inbox_item()
+        if item and ask_yes_no(self, "确认删除", f"删除临时任务“{item.title}”？"):
+            delete_inbox_task(self.workspace, item.id)
+            self.persist()
 
-        def sync_actions() -> None:
-            has_selection = selected_item() is not None
-            for button in [edit_button, delete_button, accept_button, to_task_button, archive_button, new_project_button]:
-                if button:
-                    button.setEnabled(has_selection)
-
-        def add_item() -> None:
-            dlg = InboxTaskDialog(parent=dialog)
-            if dlg.exec() == QDialog.Accepted:
-                item = add_inbox_task(self.workspace, dlg.values())
+    def suggest_all_inbox(self) -> None:
+        for item in self.workspace.inboxTasks:
+            if item.status == "待处理":
                 suggest_inbox_task(self.workspace, item)
-                save_workspace(self.workspace)
-                render()
-                self.refresh()
+        self.persist()
 
-        def edit_item() -> None:
-            item = selected_item()
-            if not item:
-                QMessageBox.information(dialog, "请选择临时任务", "请先选中一条记录。")
-                return
-            dlg = InboxTaskDialog(item, dialog)
-            if dlg.exec() == QDialog.Accepted:
-                update_inbox_task(item, dlg.values())
-                suggest_inbox_task(self.workspace, item)
-                save_workspace(self.workspace)
-                render()
-                self.refresh()
+    def accept_selected_inbox(self) -> None:
+        item = self.selected_inbox_item()
+        if not item:
+            return
+        if not item.suggestedAction:
+            suggest_inbox_task(self.workspace, item)
+        result = accept_inbox_suggestion(self.workspace, item, self.current_project())
+        self.persist()
+        if result is None:
+            QMessageBox.information(self, "需要人工判断", "该记录暂未形成明确建议，可手动转为任务、归档或新增项目。")
+        else:
+            QMessageBox.information(self, "已采纳建议", f"已执行：{item.suggestedAction}")
 
-        def delete_item() -> None:
-            item = selected_item()
-            if not item:
-                QMessageBox.information(dialog, "请选择临时任务", "请先选中一条记录。")
-                return
-            if QMessageBox.question(dialog, "确认删除", f"删除临时任务“{item.title}”？") == QMessageBox.Yes:
-                delete_inbox_task(self.workspace, item.id)
-                save_workspace(self.workspace)
-                render()
-                self.refresh()
+    def inbox_to_current_task(self) -> None:
+        item = self.selected_inbox_item()
+        project = self.current_project()
+        if not item or not project:
+            return
+        task = add_task_to_project(project, today(), {"title": item.title or "临时任务", "note": item.description, "risk": "M", "duration": 1, "status": "Open", "plannedProgress": 0, "actualProgress": 0})
+        item.status = "已转任务"
+        item.confirmed = True
+        item.suggestedProjectId = project.id
+        item.suggestedAction = "转为项目任务"
+        item.suggestionReason = f"已手动转为当前项目“{project.name}”任务。"
+        self.selected_task_id = task.id
+        self.persist()
 
-        def suggest_all() -> None:
-            for item in self.workspace.inboxTasks:
-                if item.status == "待处理":
-                    suggest_inbox_task(self.workspace, item)
-            save_workspace(self.workspace)
-            render()
-            self.refresh()
+    def archive_selected_inbox(self) -> None:
+        item = self.selected_inbox_item()
+        if not item:
+            return
+        chooser = QDialog(self)
+        chooser.setWindowTitle("手动归档临时任务")
+        chooser.resize(560, 360)
+        form = QFormLayout(chooser)
+        project_combo = QComboBox()
+        for project_item in self.workspace.projects:
+            project_combo.addItem(project_item.name, project_item.id)
+        task_combo = QComboBox()
 
-        def accept_selected() -> None:
-            item = selected_item()
-            if not item:
-                QMessageBox.information(dialog, "请选择临时任务", "请先选中一条记录。")
-                return
-            if not item.suggestedAction:
-                suggest_inbox_task(self.workspace, item)
-            current = self.current_project()
-            result = accept_inbox_suggestion(self.workspace, item, current)
-            save_workspace(self.workspace)
-            render()
-            self.refresh()
-            if result is None:
-                QMessageBox.information(dialog, "需要人工判断", "该记录暂未形成明确建议，可手动转为任务、归档或新增项目。")
-            else:
-                QMessageBox.information(dialog, "已采纳建议", f"已执行：{item.suggestedAction}")
-
-        def to_task_current() -> None:
-            item = selected_item()
-            project = self.current_project()
-            if not item or not project:
-                return
-            task = add_task_to_project(project, today(), {"title": item.title or "临时任务", "note": item.description, "risk": "M", "duration": 1, "status": "Open", "plannedProgress": 0, "actualProgress": 0})
-            item.status = "已转任务"
-            item.confirmed = True
-            item.suggestedProjectId = project.id
-            item.suggestedAction = "转为项目任务"
-            item.suggestionReason = f"已手动转为当前项目“{project.name}”任务。"
-            self.selected_task_id = task.id
-            save_workspace(self.workspace)
-            render()
-            self.refresh()
-
-        def archive_current() -> None:
-            item = selected_item()
-            if not item:
-                QMessageBox.information(dialog, "请选择临时任务", "请先选中一条记录。")
-                return
-            chooser = QDialog(dialog)
-            chooser.setWindowTitle("手动归档临时任务")
-            chooser.resize(560, 360)
-            form = QFormLayout(chooser)
-            project_combo = QComboBox()
-            for project_item in self.workspace.projects:
-                project_combo.addItem(project_item.name, project_item.id)
-            task_combo = QComboBox()
-
-            def refresh_tasks() -> None:
-                task_combo.clear()
-                task_combo.addItem("无关联任务", "")
-                project_id = project_combo.currentData()
-                project_item = next((p for p in self.workspace.projects if p.id == project_id), None)
-                if project_item:
-                    for task_item in project_item.tasks:
-                        task_combo.addItem(task_item.title, task_item.id)
-
-            project_combo.currentIndexChanged.connect(lambda _index: refresh_tasks())
-            refresh_tasks()
-            archive_type = QComboBox()
-            archive_type.addItems(["实验数据", "汇报PPT", "会议纪要", "图片截图", "交付版本", "其他"])
-            archive_type.setCurrentText(archive_type_from_text(f"{item.title} {item.description}"))
-            keywords = QLineEdit(item.source)
-            path_input = QLineEdit()
-            path_input.setPlaceholderText("可粘贴文件或目录路径，也可用右侧按钮选择")
-            browse_file = QPushButton("选择文件")
-            browse_dir = QPushButton("选择目录")
-
-            def browse_file_path() -> None:
-                path, _ = QFileDialog.getOpenFileName(chooser, "选择归档文件", "", "All Files (*.*)")
-                if path:
-                    path_input.setText(path)
-
-            def browse_dir_path() -> None:
-                path = QFileDialog.getExistingDirectory(chooser, "选择归档目录")
-                if path:
-                    path_input.setText(path)
-
-            browse_file.clicked.connect(browse_file_path)
-            browse_dir.clicked.connect(browse_dir_path)
-            path_row = QHBoxLayout()
-            path_row.addWidget(path_input, 1)
-            path_row.addWidget(browse_file)
-            path_row.addWidget(browse_dir)
-            form.addRow("目标项目", project_combo)
-            form.addRow("关联任务", task_combo)
-            form.addRow("档案类型", archive_type)
-            form.addRow("关键词", keywords)
-            form.addRow("路径", path_row)
-            buttons_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-            localize_dialog_buttons(buttons_box)
-            buttons_box.accepted.connect(chooser.accept)
-            buttons_box.rejected.connect(chooser.reject)
-            form.addRow(buttons_box)
-            if chooser.exec() != QDialog.Accepted:
-                return
+        def refresh_tasks() -> None:
+            task_combo.clear()
+            task_combo.addItem("无关联任务", "")
             project_id = project_combo.currentData()
-            project = next((p for p in self.workspace.projects if p.id == project_id), None)
-            if not project:
-                return
-            add_archive(project, {
-                "title": item.title or "临时记录归档",
-                "summary": item.description,
-                "type": archive_type.currentText(),
-                "keywords": keywords.text().strip(),
-                "path": path_input.text().strip(),
-                "relatedTaskId": task_combo.currentData() or "",
-                "status": "已归档",
-            })
-            item.status = "已归档"
-            item.confirmed = True
-            item.suggestedProjectId = project.id
-            item.suggestedAction = "手动归档到项目"
-            item.suggestionReason = f"已手动归档到项目“{project.name}”，关联任务：{task_combo.currentText()}。"
-            save_workspace(self.workspace)
-            render()
-            self.refresh()
+            project_item = next((p for p in self.workspace.projects if p.id == project_id), None)
+            if project_item:
+                for task_item in project_item.tasks:
+                    task_combo.addItem(task_item.title, task_item.id)
 
-        def new_project_from_item() -> None:
-            item = selected_item()
-            if not item:
-                return
-            project = add_project_to_workspace(self.workspace, {"name": item.title or "新项目", "summary": item.description, "nextStep": "请补充任务台账。"})
-            item.status = "已建项目"
-            item.confirmed = True
-            item.suggestedProjectId = project.id
-            item.suggestedAction = "建议新增项目"
-            item.suggestionReason = "已手动创建新项目。"
-            save_workspace(self.workspace)
-            render()
-            self.refresh()
+        project_combo.currentIndexChanged.connect(lambda _index: refresh_tasks())
+        refresh_tasks()
+        archive_type = QComboBox()
+        archive_type.addItems(["实验数据", "汇报PPT", "会议纪要", "图片截图", "交付版本", "其他"])
+        archive_type.setCurrentText(archive_type_from_text(f"{item.title} {item.description}"))
+        keywords = QLineEdit(item.source)
+        path_input = QLineEdit()
+        path_input.setPlaceholderText("可粘贴文件或目录路径，也可用右侧按钮选择")
+        browse_file = QPushButton("选择文件")
+        browse_dir = QPushButton("选择目录")
 
-        buttons = QHBoxLayout()
-        actions = [
-            ("新增临时任务", add_item, "primary"),
-            ("编辑", edit_item, ""),
-            ("删除", delete_item, ""),
-            ("刷新建议", suggest_all, ""),
-            ("采纳建议", accept_selected, "alt"),
-            ("转为当前项目任务", to_task_current, ""),
-            ("手动归档到项目", archive_current, ""),
-            ("新增项目", new_project_from_item, ""),
-        ]
-        for label, fn, obj in actions:
-            button = QPushButton(label)
-            if obj:
-                button.setObjectName(obj)
-            button.clicked.connect(fn)
-            buttons.addWidget(button)
-            if label == "编辑":
-                edit_button = button
-            elif label == "删除":
-                delete_button = button
-            elif label == "采纳建议":
-                accept_button = button
-            elif label == "转为当前项目任务":
-                to_task_button = button
-            elif label == "手动归档到项目":
-                archive_button = button
-            elif label == "新增项目":
-                new_project_button = button
-        buttons.addStretch()
-        close = QPushButton("关闭")
-        close.clicked.connect(dialog.accept)
-        buttons.addWidget(close)
-        layout.addLayout(buttons)
-        table.itemSelectionChanged.connect(sync_actions)
-        render()
-        dialog.exec()
+        def browse_file_path() -> None:
+            path, _ = QFileDialog.getOpenFileName(chooser, "选择归档文件", "", "All Files (*.*)")
+            if path:
+                path_input.setText(path)
 
-    def open_task_table_view(self) -> None:
-        project = self.current_project()
+        def browse_dir_path() -> None:
+            path = QFileDialog.getExistingDirectory(chooser, "选择归档目录")
+            if path:
+                path_input.setText(path)
+
+        browse_file.clicked.connect(browse_file_path)
+        browse_dir.clicked.connect(browse_dir_path)
+        path_row = QHBoxLayout()
+        path_row.addWidget(path_input, 1)
+        path_row.addWidget(browse_file)
+        path_row.addWidget(browse_dir)
+        form.addRow("目标项目", project_combo)
+        form.addRow("关联任务", task_combo)
+        form.addRow("档案类型", archive_type)
+        form.addRow("关键词", keywords)
+        form.addRow("路径", path_row)
+        buttons_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        localize_dialog_buttons(buttons_box)
+        buttons_box.accepted.connect(chooser.accept)
+        buttons_box.rejected.connect(chooser.reject)
+        form.addRow(buttons_box)
+        if chooser.exec() != QDialog.Accepted:
+            return
+        project_id = project_combo.currentData()
+        project = next((p for p in self.workspace.projects if p.id == project_id), None)
         if not project:
             return
+        add_archive(project, {
+            "title": item.title or "临时记录归档",
+            "summary": item.description,
+            "type": archive_type.currentText(),
+            "keywords": keywords.text().strip(),
+            "path": path_input.text().strip(),
+            "relatedTaskId": task_combo.currentData() or "",
+            "status": "已归档",
+        })
+        item.status = "已归档"
+        item.confirmed = True
+        item.suggestedProjectId = project.id
+        item.suggestedAction = "手动归档到项目"
+        item.suggestionReason = f"已手动归档到项目“{project.name}”，关联任务：{task_combo.currentText()}。"
+        self.persist()
+
+    def new_project_from_inbox(self) -> None:
+        item = self.selected_inbox_item()
+        if not item:
+            return
+        project = add_project_to_workspace(self.workspace, {"name": item.title or "新项目", "summary": item.description, "nextStep": "请补充任务台账。"})
+        item.status = "已建项目"
+        item.confirmed = True
+        item.suggestedProjectId = project.id
+        item.suggestedAction = "建议新增项目"
+        item.suggestionReason = "已手动创建新项目。"
+        self.persist()
+
+    def render_task_table_page(self) -> None:
+        if not hasattr(self, "task_table_view"):
+            return
+        self._refresh_scope_filter(self.task_scope_filter)
         rows = []
-        for task, depth in ordered_tasks(project.tasks):
-            entry = latest_entry(task)
-            rows.append([
-                task.risk,
-                "  " * depth + task.title,
-                task.responsible,
-                task.startDate,
-                task.duration,
-                task_end_date(task),
-                STATUS_LABELS.get(task.status, task.status),
-                f"{entry.plannedProgress}%",
-                f"{entry.actualProgress}%",
-                task.completedDate,
-                task.note,
-            ])
-        self._show_table_dialog(
-            "任务表格",
-            ["风险", "任务", "负责人", "开始", "工期", "结束", "状态", "计划", "实际", "完成日", "备注"],
-            rows,
-            1280,
-            720,
-        )
-
-    def open_daily_log_view(self) -> None:
-        project = self.current_project()
-        if not project:
-            return
-        task_names = {task.id: task.title for task in project.tasks}
-        rows = [
-            [log.date, log.responsible, task_names.get(log.taskId, ""), log.planText, log.actualText, f"{log.plannedProgress}%", f"{log.actualProgress}%", log.result, log.delayReason]
-            for log in sorted(project.dailyLogs, key=lambda item: item.date, reverse=True)
-        ]
-        self._show_table_dialog(
-            "日报记录",
-            ["日期", "负责人", "任务", "计划完成", "实际完成", "计划", "实际", "结果", "延期原因"],
-            rows,
-            1280,
-            720,
-        )
-
-    def open_risk_board_view(self) -> None:
-        project = self.current_project()
-        if not project:
-            return
-        current = today()
-        rows = []
-        for task in project.tasks:
-            entry = latest_entry(task)
-            reasons = []
-            if task.risk == "H" and task.status != "Closed":
-                reasons.append("高风险")
-            if task.status != "Closed" and task_end_date(task) < current:
-                reasons.append("逾期未关闭")
-            if entry.plannedProgress - entry.actualProgress >= 10 and task.status != "Closed":
-                reasons.append("进度落后")
-            if reasons:
+        for project in self._projects_for_scope(self.task_scope_filter):
+            for task, depth in ordered_tasks(project.tasks):
+                entry = latest_entry(task)
                 rows.append([
-                    " / ".join(reasons),
+                    project.name,
                     task.risk,
-                    task.title,
+                    "  " * depth + task.title,
                     task.responsible,
-                    STATUS_LABELS.get(task.status, task.status),
+                    task.startDate,
+                    task.duration,
                     task_end_date(task),
-                    f"计划 {entry.plannedProgress}% / 实际 {entry.actualProgress}%",
+                    STATUS_LABELS.get(task.status, task.status),
+                    f"{entry.plannedProgress}%",
+                    f"{entry.actualProgress}%",
+                    task.completedDate,
                     task.note,
                 ])
-        self._show_table_dialog(
-            "风险看板",
-            ["关注原因", "风险", "任务", "负责人", "状态", "结束", "进度", "备注"],
-            rows or [["暂无异常", "", "", "", "", "", "", ""]],
-            1180,
-            620,
-        )
+        self._fill_table(self.task_table_view, rows)
+        self.task_count_label.setText(f"{len(rows)} 条任务")
+
+    def render_daily_log_page(self) -> None:
+        if not hasattr(self, "daily_table_view"):
+            return
+        self._refresh_scope_filter(self.daily_scope_filter)
+        rows = []
+        for project in self._projects_for_scope(self.daily_scope_filter):
+            task_names = {task.id: task.title for task in project.tasks}
+            for log in sorted(project.dailyLogs, key=lambda item: item.date, reverse=True):
+                rows.append([project.name, log.date, log.responsible, task_names.get(log.taskId, ""), log.planText, log.actualText, f"{log.plannedProgress}%", f"{log.actualProgress}%", log.result, log.delayReason])
+        self._fill_table(self.daily_table_view, rows)
+        self.daily_count_label.setText(f"{len(rows)} 条日报")
+
+    def render_risk_board_page(self) -> None:
+        if not hasattr(self, "risk_table_view"):
+            return
+        self._refresh_scope_filter(self.risk_scope_filter)
+        rows = []
+        current = today()
+        for project in self._projects_for_scope(self.risk_scope_filter):
+            for task in project.tasks:
+                entry = latest_entry(task)
+                reasons = []
+                if task.risk == "H" and task.status != "Closed":
+                    reasons.append("高风险")
+                if task.status != "Closed" and task_end_date(task) < current:
+                    reasons.append("逾期未关闭")
+                if entry.plannedProgress - entry.actualProgress >= 10 and task.status != "Closed":
+                    reasons.append("进度落后")
+                if reasons:
+                    rows.append([project.name, " / ".join(reasons), task.risk, task.title, task.responsible, STATUS_LABELS.get(task.status, task.status), task_end_date(task), f"计划 {entry.plannedProgress}% / 实际 {entry.actualProgress}%", task.note])
+        self._fill_table(self.risk_table_view, rows or [["", "暂无异常", "", "", "", "", "", "", ""]])
+        self.risk_count_label.setText(f"{len(rows)} 条风险")
+
+    def _fill_table(self, table: QTableWidget, rows: list[list[object]]) -> None:
+        table.setRowCount(len(rows))
+        for row_index, row_values in enumerate(rows):
+            for col_index, value in enumerate(row_values):
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
+                table.setItem(row_index, col_index, item)
+            table.setRowHeight(row_index, 38)
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+
+    def render_current_stack_page(self) -> None:
+        if not hasattr(self, "main_stack"):
+            return
+        current = self.main_stack.currentWidget()
+        if current == self.overview_page:
+            self._render_overview()
+        elif current == self.archive_page:
+            self.render_archive_page()
+        elif current == self.inbox_page:
+            self.render_inbox_page()
+        elif current == self.task_table_page:
+            self.render_task_table_page()
+        elif current == self.daily_log_page:
+            self.render_daily_log_page()
+        elif current == self.risk_board_page:
+            self.render_risk_board_page()
+
+    def open_archive_view(self) -> None:
+        self.render_archive_page()
+        self.main_stack.setCurrentWidget(self.archive_page)
+
+    def open_inbox_view(self) -> None:
+        self.render_inbox_page()
+        self.main_stack.setCurrentWidget(self.inbox_page)
+
+    def open_task_table_view(self) -> None:
+        self.render_task_table_page()
+        self.main_stack.setCurrentWidget(self.task_table_page)
+
+    def open_daily_log_view(self) -> None:
+        self.render_daily_log_page()
+        self.main_stack.setCurrentWidget(self.daily_log_page)
+
+    def open_risk_board_view(self) -> None:
+        self.render_risk_board_page()
+        self.main_stack.setCurrentWidget(self.risk_board_page)
 
     def open_data_center_view(self) -> None:
-        dialog = QDialog(self)
-        dialog.setWindowTitle("数据中心")
-        dialog.resize(520, 360)
-        layout = QVBoxLayout(dialog)
-        title = QLabel("数据中心")
-        title.setStyleSheet("font-size:20px;font-weight:900;")
-        desc = QLabel("导入/导出本地 JSON、CSV、Excel，或打开本地数据目录。")
-        desc.setWordWrap(True)
-        desc.setStyleSheet("color:#64748b;")
-        layout.addWidget(title)
-        layout.addWidget(desc)
-        for label, handler in [
-            ("导入网页版 JSON", self.import_json),
-            ("导出完整 JSON", self.export_json),
-            ("导出当前项目 CSV", self.export_csv),
-            ("导出当前项目 Excel", self.export_excel),
-            ("打开数据目录", self.open_data_dir),
-        ]:
-            button = QPushButton(label)
-            button.clicked.connect(lambda _checked=False, fn=handler, dlg=dialog: (dlg.accept(), fn()))
-            layout.addWidget(button)
-        close = QDialogButtonBox(QDialogButtonBox.Close)
-        localize_dialog_buttons(close)
-        close.rejected.connect(dialog.reject)
-        layout.addStretch()
-        layout.addWidget(close)
-        dialog.exec()
+        self.main_stack.setCurrentWidget(self.data_center_page)
 
     def refresh(self) -> None:
         self.project_select.blockSignals(True)
@@ -2004,6 +2130,7 @@ class MainWindow(QMainWindow):
         self.planned_card["note"].setText("基于任务最新计划进度")
         overdue_value = overdue_count(project)
         lagging_value = self._lagging_count(project)
+        self._render_project_status(overdue_value, lagging_value)
         self.overdue_card["value"].setText(str(overdue_value))
         self.overdue_card["note"].setText("需今日处理" if overdue_value else "暂无逾期")
         if hasattr(self, "sidebar"):
@@ -2017,6 +2144,18 @@ class MainWindow(QMainWindow):
         self._render_logs(project)
         self._render_detail(project)
         self._render_overview()
+        self.render_current_stack_page()
+
+    def _render_project_status(self, overdue_value: int, lagging_value: int) -> None:
+        if overdue_value:
+            value, note, color = "风险", f"{overdue_value} 个任务逾期", "#f87171"
+        elif lagging_value:
+            value, note, color = "关注", f"{lagging_value} 个任务进度落后", "#fbbf24"
+        else:
+            value, note, color = "正常", "暂无异常", "#22c55e"
+        self.status_card["value"].setText(value)
+        self.status_card["note"].setText(note)
+        self.status_card["note"].setStyleSheet(f"color:{color};font-weight:800;")
 
     def _deadline_note(self, deadline: str) -> str:
         try:
@@ -2080,6 +2219,16 @@ class MainWindow(QMainWindow):
                     item.setBackground(QColor("#fee2e2"))
                 self.log_table.setItem(row, col, item)
             self.log_table.setRowHeight(row, 42)
+        if logs and self.log_table.currentRow() < 0:
+            self.log_table.selectRow(0)
+        self._sync_log_actions()
+
+    def _sync_log_actions(self) -> None:
+        has_log = self.selected_log() is not None
+        if hasattr(self, "log_edit_button"):
+            self.log_edit_button.setEnabled(has_log)
+        if hasattr(self, "log_delete_button"):
+            self.log_delete_button.setEnabled(has_log)
 
     def _render_detail(self, project: Project) -> None:
         task = next((item for item in project.tasks if item.id == self.selected_task_id), None)
@@ -2169,8 +2318,7 @@ class MainWindow(QMainWindow):
         project = self.current_project()
         if not project:
             return
-        ok = QMessageBox.question(self, "确认删除", f"删除项目「{project.name}」会同时删除任务和日报，是否继续？")
-        if ok != QMessageBox.Yes:
+        if not ask_yes_no(self, "确认删除", f"删除项目「{project.name}」会同时删除任务和日报，是否继续？"):
             return
         try:
             delete_project_from_workspace(self.workspace, project.id)
@@ -2180,15 +2328,16 @@ class MainWindow(QMainWindow):
         self.selected_task_id = None
         self.persist()
 
-    def add_task(self) -> None:
+    def add_task(self, default_date: str | None = None) -> None:
         project = self.current_project()
         if not project:
             return
-        dialog = TaskDialog(project, selected_date=self.workspace.selectedDate, parent=self)
+        task_date = default_date or today()
+        dialog = TaskDialog(project, selected_date=task_date, parent=self)
         if dialog.exec() != QDialog.Accepted:
             return
         values = dialog.values()
-        task = add_task_to_project(project, self.workspace.selectedDate, values)
+        task = add_task_to_project(project, task_date, values)
         self._sync_task_archive(project, task, values)
         self.selected_task_id = task.id
         self.persist()
@@ -2214,24 +2363,37 @@ class MainWindow(QMainWindow):
         if not project or not task:
             QMessageBox.information(self, "请选择任务", "请先在任务计划视图中选中一行。")
             return
-        ok = QMessageBox.question(self, "确认删除", f"删除任务「{task.title}」会同时删除它的子任务和相关日报，是否继续？")
-        if ok != QMessageBox.Yes:
+        if not ask_yes_no(self, "确认删除", f"删除任务「{task.title}」会同时删除它的子任务和相关日报，是否继续？"):
             return
         delete_task_from_project(project, task.id)
         self.selected_task_id = None
         self.persist()
 
-    def add_daily(self) -> None:
+    def add_daily_for_selected_date(self) -> None:
+        self.add_daily(self.workspace.selectedDate)
+
+    def add_daily(self, default_date: str | None = None) -> None:
         project = self.current_project()
         if not project:
             return
         if not project.tasks:
             QMessageBox.warning(self, "缺少任务", "请先新增任务，再填写日报。")
             return
-        dialog = DailyDialog(project, selected_date=self.workspace.selectedDate, parent=self)
-        if dialog.exec() != QDialog.Accepted:
+        prefill_log: DailyLog | None = None
+        while True:
+            dialog = DailyDialog(project, prefill_log, default_date or today(), self)
+            if dialog.exec() != QDialog.Accepted:
+                return
+            values = dialog.values()
+            existing = next((log for log in project.dailyLogs if log.taskId == values["taskId"] and log.date == values["date"]), None)
+            if existing and ask_yes_no(self, "已有日报", "同一任务在该日期已经有日报，是否编辑并覆盖已有日报？"):
+                self._save_log_values(existing, values)
+                return
+            if existing:
+                prefill_log = DailyLog(**{key: values[key] for key in ["taskId", "date", "responsible", "planText", "actualText", "plannedProgress", "actualProgress", "result", "delayReason"]})
+                continue
+            self._save_log_values(None, values)
             return
-        self._save_log_values(None, dialog.values())
 
     def edit_daily(self) -> None:
         project = self.current_project()
@@ -2250,8 +2412,7 @@ class MainWindow(QMainWindow):
         if not project or not log:
             QMessageBox.information(self, "请选择日报", "请先在日报记录中选中一行。")
             return
-        ok = QMessageBox.question(self, "确认删除", "删除这条日报会同步移除对应日期的任务进度，是否继续？")
-        if ok != QMessageBox.Yes:
+        if not ask_yes_no(self, "确认删除", "删除这条日报会同步移除对应日期的任务进度，是否继续？"):
             return
         delete_log_from_project(project, log.id)
         self.persist()
@@ -2340,7 +2501,7 @@ class MainWindow(QMainWindow):
         project = self.current_project()
         if not project:
             return
-        file_name, _ = QFileDialog.getSaveFileName(self, "导出任务 CSV", f"{project.name}-tasks.csv", "CSV Files (*.csv)")
+        file_name, _ = QFileDialog.getSaveFileName(self, "导出任务 CSV", f"{safe_default_filename(project.name)}-tasks.csv", "CSV Files (*.csv)")
         if file_name:
             export_tasks_csv(project, Path(file_name))
 
@@ -2348,7 +2509,9 @@ class MainWindow(QMainWindow):
         project = self.current_project()
         if not project:
             return
-        file_name, _ = QFileDialog.getSaveFileName(self, "导出 Excel 项目表", f"{project.name}-project-table.xlsx", "Excel Files (*.xlsx)")
+        if is_gantt_truncated(project) and not ask_yes_no(self, "甘特图跨度较长", "该项目甘特图跨度超过 120 天，Excel 将只展示前 120 天并写入提示。是否继续导出？"):
+            return
+        file_name, _ = QFileDialog.getSaveFileName(self, "导出 Excel 项目表", f"{safe_default_filename(project.name)}-project-table.xlsx", "Excel Files (*.xlsx)")
         if file_name:
             export_project_excel(project, Path(file_name))
 
@@ -2356,13 +2519,20 @@ class MainWindow(QMainWindow):
         path = data_dir()
         path.mkdir(parents=True, exist_ok=True)
         QMessageBox.information(self, "数据目录", f"这里保存本地数据 workspace.json 和自动备份文件。\n\n{path}")
-        subprocess.Popen(["explorer", str(path)])
+        open_local_path(path)
 
 
 def main() -> int:
     app = QApplication(sys.argv)
     app.setFont(QFont("Microsoft YaHei UI", 10))
     app.setStyleSheet(QSS)
+    data_dir().mkdir(parents=True, exist_ok=True)
+    lock = QLockFile(str(data_dir() / "project-desk-local.lock"))
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(100):
+        QMessageBox.warning(None, "Project Desk Local 已在运行", "检测到已有 Project Desk Local 窗口正在运行。请先使用已打开的窗口，避免数据被覆盖。")
+        return 0
+    app._project_desk_lock = lock
     window = MainWindow()
     window.show()
     return app.exec()

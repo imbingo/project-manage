@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -283,6 +284,9 @@ def export_project_excel(project: Project, path: Path) -> None:
 
     ws.append([])
     dates = _gantt_dates(project)
+    if is_gantt_truncated(project):
+        ws.append(["提示", "甘特图日期跨度超过 120 天，当前导出仅显示前 120 天。"])
+        style_row(ws.max_row)
     gantt_header_row = ws.max_row + 1
     ws.append(["任务", "负责人", "风险", "实际%", *[item[5:] for item in dates]])
     for cell in ws[gantt_header_row]:
@@ -320,5 +324,13 @@ def _gantt_dates(project: Project) -> list[str]:
         return [add_days(today(), index) for index in range(14)]
     start = min(task.startDate for task in project.tasks)
     end = max(task_end_date(task) for task in project.tasks)
-    total = min(max((__import__("datetime").date.fromisoformat(end) - __import__("datetime").date.fromisoformat(start)).days + 1, 14), 120)
+    total = min(max((date.fromisoformat(end) - date.fromisoformat(start)).days + 1, 14), 120)
     return [add_days(start, index) for index in range(total)]
+
+
+def is_gantt_truncated(project: Project) -> bool:
+    if not project.tasks:
+        return False
+    start = min(task.startDate for task in project.tasks)
+    end = max(task_end_date(task) for task in project.tasks)
+    return (date.fromisoformat(end) - date.fromisoformat(start)).days + 1 > 120
