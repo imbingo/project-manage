@@ -2,6 +2,8 @@
 
 这是 Project Desk 的本地单机 Python 桌面版，适合公司电脑离线使用或后续打包成 Windows exe。
 
+本目录是 Project Desk 桌面版的维护入口；独立的 `project-manage-desktop` 仓库已合并回主仓并归档。
+
 ## V2.3 更新重点
 
 - **侧边栏入口主页面化**：任务计划、总览、临时任务、项目档案、任务表格、日报记录、风险看板、数据中心都在主区域切换，不再打开大视图弹窗。
@@ -42,6 +44,8 @@ cd local_desktop
 python -m pip install -r requirements.txt
 python main.py
 ```
+
+Windows 用户也可以直接运行 `run_app.bat`，脚本会先检查必要依赖再启动桌面版。
 
 默认数据位置：
 
