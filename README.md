@@ -108,4 +108,6 @@ python -m http.server 8080
 
 仓库新增 [local_desktop/](./local_desktop) Python 桌面版，不需要登录或 Supabase。它使用本地 JSON 保存数据，支持导入网页版 JSON，并可导出包含项目概览、任务台账、日报和甘特图的 Excel 项目管理表。
 
+桌面版已统一合并到本仓库维护；独立的 `project-manage-desktop` 仓库仅保留归档历史。
+
 运行和打包说明见 [local_desktop/README.md](./local_desktop/README.md)。
