@@ -5,7 +5,7 @@ from datetime import date
 from uuid import uuid4
 
 
-APP_VERSION = "ProjectDeskLocal-V2.3-StabilityPages"
+APP_VERSION = "Project_Manage_LocalV3"
 
 
 def new_id() -> str:
@@ -76,7 +76,7 @@ class InboxTask:
     title: str = ""
     description: str = ""
     source: str = ""
-    status: str = "待处理"  # 待处理 / 已转任务 / 已归档 / 已建项目 / 已忽略
+    status: str = "待归档"  # 待归档/待处理 / 已转项目任务/已转任务 / 已归档到项目/已归档 / 已新建项目/已建项目 / 已忽略
     suggestedAction: str = ""
     suggestedProjectId: str = ""
     suggestionReason: str = ""
@@ -151,6 +151,7 @@ def sample_workspace() -> Workspace:
             title="整理上周实验截图和复测数据",
             description="先临时记下来，后续可能归档到示例项目的实验数据中。",
             source="手动记录",
+            status="待归档",
         )
     ]
     return Workspace(selectedProjectId=project.id, selectedDate=today(), projects=[project], inboxTasks=inbox)

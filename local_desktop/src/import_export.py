@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -10,14 +9,14 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from .metrics import add_days, project_progress, task_end_date
+from .metrics import add_days, project_progress, task_end_date, normalize_date, parse_int
 from .models import ArchiveItem, DailyLog, InboxTask, ProgressEntry, Project, Task, Workspace, new_id, to_dict, today, APP_VERSION
 
 LOCAL_KEYS = ("project-desk-local-v5", "project-desk-local-v4", "project-desk-v3")
 RISKS = {"H", "M", "L"}
 STATUSES = {"Open", "Ongoing", "Closed"}
 ARCHIVE_TYPES = {"实验数据", "汇报PPT", "会议纪要", "图片截图", "交付版本", "其他"}
-INBOX_STATUSES = {"待处理", "已转任务", "已归档", "已建项目", "已忽略"}
+INBOX_STATUSES = {"待归档", "待处理", "已转项目任务", "已转任务", "已归档到项目", "已归档", "已新建项目", "已建项目", "已忽略"}
 
 
 def pick(source: dict[str, Any], *keys: str, default: Any = None) -> Any:
@@ -36,9 +35,9 @@ def clamp_progress(value: Any) -> int:
 
 
 def clean_date(value: Any, fallback: str | None = None) -> str:
-    text = str(value or "")
-    if len(text) == 10 and text[4] == "-" and text[7] == "-":
-        return text
+    normalized = normalize_date(str(value or ""))
+    if normalized:
+        return normalized
     return fallback if fallback is not None else today()
 
 
@@ -115,7 +114,7 @@ def normalize_workspace(raw: Any) -> tuple[Workspace, list[str]]:
         inboxTasks=inbox_tasks,
         version=str(pick(payload, "version", default=APP_VERSION)),
     )
-    diagnostics.append(f"归一化项目 {len(projects)} 个、临时任务 {len(inbox_tasks)} 条。")
+    diagnostics.append(f"归一化项目 {len(projects)} 个、待归档任务 {len(inbox_tasks)} 条。")
     return workspace, diagnostics
 
 
@@ -147,7 +146,7 @@ def _normalize_task(item: dict[str, Any], payload: dict[str, Any]) -> Task:
         title=str(pick(item, "title", "task", "name", default="未命名任务")),
         responsible=str(pick(item, "responsible", "owner", default="")),
         startDate=clean_date(pick(item, "startDate", "start_date")),
-        duration=max(1, int(pick(item, "duration", default=1) or 1)),
+        duration=max(1, parse_int(pick(item, "duration", default=1), 1)),
         status=status if status in STATUSES else "Open",
         completedDate=clean_date(pick(item, "completedDate", "completed_date"), ""),
         note=str(pick(item, "note", "remark", default="")),
@@ -190,14 +189,14 @@ def _normalize_archive(item: dict[str, Any]) -> ArchiveItem:
 
 
 def _normalize_inbox(item: dict[str, Any]) -> InboxTask:
-    status = str(pick(item, "status", default="待处理"))
+    status = str(pick(item, "status", default="待归档"))
     return InboxTask(
         id=str(pick(item, "id", default=new_id())),
         createdDate=clean_date(pick(item, "createdDate", "created_date", "date")),
         title=str(pick(item, "title", "name", default="")),
         description=str(pick(item, "description", "note", "summary", default="")),
         source=str(pick(item, "source", default="")),
-        status=status if status in INBOX_STATUSES else "待处理",
+        status=status if status in INBOX_STATUSES else "待归档",
         suggestedAction=str(pick(item, "suggestedAction", "suggested_action", default="")),
         suggestedProjectId=str(pick(item, "suggestedProjectId", "suggested_project_id", default="")),
         suggestionReason=str(pick(item, "suggestionReason", "suggestion_reason", default="")),
@@ -284,9 +283,6 @@ def export_project_excel(project: Project, path: Path) -> None:
 
     ws.append([])
     dates = _gantt_dates(project)
-    if is_gantt_truncated(project):
-        ws.append(["提示", "甘特图日期跨度超过 120 天，当前导出仅显示前 120 天。"])
-        style_row(ws.max_row)
     gantt_header_row = ws.max_row + 1
     ws.append(["任务", "负责人", "风险", "实际%", *[item[5:] for item in dates]])
     for cell in ws[gantt_header_row]:
@@ -324,13 +320,5 @@ def _gantt_dates(project: Project) -> list[str]:
         return [add_days(today(), index) for index in range(14)]
     start = min(task.startDate for task in project.tasks)
     end = max(task_end_date(task) for task in project.tasks)
-    total = min(max((date.fromisoformat(end) - date.fromisoformat(start)).days + 1, 14), 120)
+    total = min(max((__import__("datetime").date.fromisoformat(end) - __import__("datetime").date.fromisoformat(start)).days + 1, 14), 120)
     return [add_days(start, index) for index in range(total)]
-
-
-def is_gantt_truncated(project: Project) -> bool:
-    if not project.tasks:
-        return False
-    start = min(task.startDate for task in project.tasks)
-    end = max(task_end_date(task) for task in project.tasks)
-    return (date.fromisoformat(end) - date.fromisoformat(start)).days + 1 > 120
