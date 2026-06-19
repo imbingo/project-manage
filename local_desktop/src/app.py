@@ -140,13 +140,27 @@ def normalize_ui_date(value: str, fallback_year: int | None = None) -> str | Non
     return normalize_date(value, fallback_year=fallback_year)
 
 
+def make_date_edit(value: str = "") -> QDateEdit:
+    normalized = normalize_ui_date(value) or today()
+    edit = QDateEdit()
+    edit.setCalendarPopup(True)
+    edit.setDisplayFormat("yyyy-MM-dd")
+    qdate = QDate.fromString(normalized, "yyyy-MM-dd")
+    edit.setDate(qdate if qdate.isValid() else QDate.currentDate())
+    return edit
+
+
+def date_edit_text(edit: QDateEdit) -> str:
+    return edit.date().toString("yyyy-MM-dd")
+
+
 class ProjectDialog(QDialog):
     def __init__(self, project: Project | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("项目设置" if project else "新增项目")
         self.resize(560, 430)
         self.name = QLineEdit(project.name if project else "")
-        self.deadline = QLineEdit(project.deadline if project else today())
+        self.deadline = make_date_edit(project.deadline if project else today())
         self.summary = QTextEdit(project.summary if project else "")
         self.top_risk = QTextEdit(project.topRisk if project else "")
         self.next_step = QTextEdit(project.nextStep if project else "")
@@ -175,7 +189,7 @@ class ProjectDialog(QDialog):
     def values(self) -> dict:
         return {
             "name": self.name.text().strip() or "未命名项目",
-            "deadline": normalize_ui_date(self.deadline.text().strip()) or today(),
+            "deadline": date_edit_text(self.deadline),
             "summary": self.summary.toPlainText().strip(),
             "topRisk": self.top_risk.toPlainText().strip(),
             "nextStep": self.next_step.toPlainText().strip(),
@@ -196,13 +210,13 @@ class TaskDialog(QDialog):
         self.risk.addItems(["H", "M", "L"])
         self.title = QLineEdit(task.title if task else "")
         self.responsible = QLineEdit(task.responsible if task else "")
-        self.start = QLineEdit(task.startDate if task else (selected_date or today()))
+        self.start = make_date_edit(task.startDate if task else (selected_date or today()))
         self.duration = QSpinBox()
         self.duration.setRange(1, 999)
         self.duration.setValue(max(1, parse_int(task.duration, 3)) if task else 3)
         self.status = QComboBox()
         self.status.addItems(["Open", "Ongoing", "Closed"])
-        self.completed = QLineEdit(task.completedDate if task else "")
+        self.completed = make_date_edit(task.completedDate if task and task.completedDate else (selected_date or today()))
         self.note = QTextEdit(task.note if task else "")
         self.note.setFixedHeight(82)
         self.archive_type = QComboBox()
@@ -262,10 +276,10 @@ class TaskDialog(QDialog):
             "risk": self.risk.currentText(),
             "title": self.title.text().strip() or "未命名任务",
             "responsible": self.responsible.text().strip(),
-            "startDate": normalize_ui_date(self.start.text().strip()) or today(),
+            "startDate": date_edit_text(self.start),
             "duration": self.duration.value(),
             "status": self.status.currentText(),
-            "completedDate": normalize_ui_date(self.completed.text().strip()) or "",
+            "completedDate": date_edit_text(self.completed) if self.status.currentText() == "Closed" else "",
             "note": self.note.toPlainText().strip(),
             "archivePath": self.archive_path.text().strip(),
             "archiveType": self.archive_type.currentText(),
@@ -283,7 +297,7 @@ class DailyDialog(QDialog):
         self.task = QComboBox()
         for item in project.tasks:
             self.task.addItem(item.title, item.id)
-        self.date = QLineEdit(log.date if log else (selected_date or today()))
+        self.date = make_date_edit(log.date if log else (selected_date or today()))
         self.responsible = QLineEdit(log.responsible if log else "")
         self.plan_text = QTextEdit(log.planText if log else "")
         self.actual_text = QTextEdit(log.actualText if log else "")
@@ -321,7 +335,7 @@ class DailyDialog(QDialog):
     def values(self) -> dict:
         return {
             "taskId": self.task.currentData(),
-            "date": normalize_ui_date(self.date.text().strip()) or today(),
+            "date": date_edit_text(self.date),
             "responsible": self.responsible.text().strip(),
             "planText": self.plan_text.toPlainText().strip(),
             "actualText": self.actual_text.toPlainText().strip(),
@@ -338,7 +352,7 @@ class ArchiveDialog(QDialog):
         self.setWindowTitle("编辑项目档案" if archive else "新增项目档案")
         self.resize(620, 560)
         self.project = project
-        self.date = QLineEdit(archive.date if archive else today())
+        self.date = make_date_edit(archive.date if archive else today())
         self.type = QComboBox()
         self.type.addItems(["实验数据", "汇报PPT", "会议纪要", "图片截图", "交付版本", "其他"])
         self.title = QLineEdit(archive.title if archive else "")
@@ -391,7 +405,7 @@ class ArchiveDialog(QDialog):
         summary = self.summary.toPlainText().strip()
         selected_type = self.type.currentText() or archive_type_from_text(f"{title} {summary} {self.keywords.text()}")
         return {
-            "date": normalize_ui_date(self.date.text().strip()) or today(),
+            "date": date_edit_text(self.date),
             "type": selected_type,
             "title": title or "未命名档案",
             "owner": self.owner.text().strip(),
@@ -408,7 +422,7 @@ class InboxTaskDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("编辑待归档任务" if item else "新增待归档任务")
         self.resize(600, 460)
-        self.created = QLineEdit(item.createdDate if item else today())
+        self.created = make_date_edit(item.createdDate if item else today())
         self.title = QLineEdit(item.title if item else "")
         self.source = QLineEdit(item.source if item else "手动记录")
         self.status = QComboBox()
@@ -430,7 +444,7 @@ class InboxTaskDialog(QDialog):
 
     def values(self) -> dict:
         return {
-            "createdDate": normalize_ui_date(self.created.text().strip()) or today(),
+            "createdDate": date_edit_text(self.created),
             "title": self.title.text().strip() or "未命名待归档任务",
             "source": self.source.text().strip(),
             "status": self.status.currentText(),
@@ -827,7 +841,7 @@ class MainWindow(QMainWindow):
         QApplication.instance().setFont(QFont("Microsoft YaHei UI", 10))
         self.workspace: Workspace = load_workspace()
         self.selected_task_id: str | None = None
-        self.setWindowTitle("Project_Manage_LocalV3")
+        self.setWindowTitle("Project_Manage_LocalV3.1")
         self.resize(1680, 980)
         self.setMinimumSize(1280, 760)
         self._build_ui()
@@ -866,7 +880,7 @@ class MainWindow(QMainWindow):
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(22, 14, 22, 14)
         title_box = QVBoxLayout()
-        eyebrow = QLabel("Project_Manage_LocalV3")
+        eyebrow = QLabel("Project_Manage_LocalV3.1")
         eyebrow.setStyleSheet("color:#2563eb;font-weight:900;font-size:12px;")
         self.title = QLabel()
         self.title.setStyleSheet("font-size:26px;font-weight:900;")

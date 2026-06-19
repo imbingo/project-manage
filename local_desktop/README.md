@@ -1,4 +1,4 @@
-# Project_Manage_LocalV3
+# Project_Manage_LocalV3.1
 
 ## V3 更新重点
 
@@ -22,7 +22,7 @@
 - **项目看板独立保留**：原“全部项目总览”改为左侧“项目看板”，用于集中查看所有项目的 deadline、进度、任务数、逾期数和档案数。
 - **临时任务改名为待归档任务**：左侧导航和页面文案统一改为“待归档任务/待归档任务收集箱”，更贴合先收集、再归档、再转任务/建项目的工作流。
 - **兼容旧数据**：继续兼容 V2.1/V2.2/V2.3 导出的完整 JSON；旧字段 `inboxTasks` 和旧状态“待处理/已转任务/已归档/已建项目”仍可导入。
-- **数据版本标记更新**：保存的 workspace 版本标记改为 `Project_Manage_LocalV3`。
+- **数据版本标记更新**：保存的 workspace 版本标记改为 `Project_Manage_LocalV3.1`。
 
 ## V2.1 基线功能
 
@@ -68,7 +68,7 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3/Project_Manage_LocalV3.exe
+local_desktop/dist/Project_Manage_LocalV3.1/Project_Manage_LocalV3.1.exe
 ```
 
 ## 与网页版差异

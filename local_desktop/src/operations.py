@@ -34,6 +34,15 @@ def sync_task_status_from_progress(task: Task) -> None:
     task.completedDate = entry.entryDate if actual == 100 else ""
 
 
+def progress_changed(task: Task, values: dict) -> bool:
+    if "plannedProgress" not in values and "actualProgress" not in values:
+        return False
+    current = latest_entry(task)
+    planned = parse_int(values.get("plannedProgress", current.plannedProgress), int(current.plannedProgress))
+    actual = parse_int(values.get("actualProgress", current.actualProgress), int(current.actualProgress))
+    return planned != int(current.plannedProgress) or actual != int(current.actualProgress)
+
+
 def add_project(workspace: Workspace, values: dict) -> Project:
     project = Project(
         name=values.get("name") or "未命名项目",
@@ -82,11 +91,14 @@ def add_task(project: Project, selected_date: str, values: dict) -> Task:
 
 
 def update_task(task: Task, selected_date: str, values: dict) -> None:
+    should_update_progress = progress_changed(task, values)
     for key in ["parentId", "risk", "title", "responsible", "startDate", "duration", "status", "completedDate", "note", "archivePath", "archiveType", "archiveKeywords"]:
         if key in values:
             setattr(task, key, values[key])
     task.duration = max(1, parse_int(task.duration, 1))
-    upsert_progress(task, selected_date or task.startDate, int(values.get("plannedProgress", 0)), int(values.get("actualProgress", 0)))
+    if should_update_progress:
+        upsert_progress(task, selected_date or task.startDate, int(values.get("plannedProgress", 0)), int(values.get("actualProgress", 0)))
+        sync_task_status_from_progress(task)
 
 
 def delete_task(project: Project, task_id: str) -> set[str]:
