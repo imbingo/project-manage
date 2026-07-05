@@ -8,7 +8,8 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from openpyxl import load_workbook
-from PySide6.QtWidgets import QApplication, QDateEdit
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QCalendarWidget, QDateEdit
 
 from src.app import ArchiveDialog, DailyDialog, InboxTaskDialog, ProjectDialog, TaskDialog
 from src.import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json, normalize_workspace
@@ -208,6 +209,11 @@ def test_core_date_fields_use_calendar_widgets():
     ]:
         assert isinstance(widget, QDateEdit)
         assert widget.calendarPopup()
+        calendar = widget.calendarWidget()
+        assert isinstance(calendar, QCalendarWidget)
+        assert calendar.firstDayOfWeek() == Qt.Monday
+        assert calendar.verticalHeaderFormat() == QCalendarWidget.NoVerticalHeader
+        assert "qt_calendar_navigationbar" in calendar.styleSheet()
 
     assert project_dialog.values()["deadline"] == "2026-06-30"
     assert task_dialog.values()["startDate"] == "2026-06-01"

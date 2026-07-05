@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractScrollArea,
     QApplication,
+    QCalendarWidget,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -112,6 +113,72 @@ QMenu::item:selected { background: #eff6ff; color: #2563eb; }
 """
 
 
+CALENDAR_QSS = """
+QCalendarWidget {
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 14px;
+}
+QCalendarWidget QWidget#qt_calendar_navigationbar {
+  background: #111827;
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+  min-height: 44px;
+}
+QCalendarWidget QToolButton {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  font-weight: 900;
+  margin: 6px 4px;
+  padding: 6px 10px;
+}
+QCalendarWidget QToolButton:hover { background: #1f2937; }
+QCalendarWidget QToolButton::menu-indicator { image: none; width: 0; }
+QCalendarWidget QSpinBox {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #111827;
+  min-height: 26px;
+  padding: 3px 8px;
+  selection-background-color: #0f766e;
+}
+QCalendarWidget QMenu {
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 10px;
+  padding: 6px;
+}
+QCalendarWidget QMenu::item {
+  border-radius: 7px;
+  padding: 7px 14px;
+}
+QCalendarWidget QMenu::item:selected {
+  background: #ecfeff;
+  color: #0f766e;
+}
+QCalendarWidget QAbstractItemView {
+  background: #ffffff;
+  border: 0;
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
+  outline: 0;
+  padding: 8px;
+  selection-background-color: #0f766e;
+  selection-color: #ffffff;
+}
+QCalendarWidget QAbstractItemView:enabled {
+  color: #334155;
+  font-weight: 700;
+}
+QCalendarWidget QAbstractItemView:disabled {
+  color: #cbd5e1;
+}
+"""
+
+
 def ordered_tasks(tasks: list[Task]) -> list[tuple[Task, int]]:
     task_map = {task.id: {"task": task, "children": []} for task in tasks}
     roots: list[Task] = []
@@ -140,11 +207,45 @@ def normalize_ui_date(value: str, fallback_year: int | None = None) -> str | Non
     return normalize_date(value, fallback_year=fallback_year)
 
 
+def configure_calendar(calendar: QCalendarWidget) -> QCalendarWidget:
+    calendar.setFirstDayOfWeek(Qt.Monday)
+    calendar.setGridVisible(False)
+    calendar.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
+    calendar.setHorizontalHeaderFormat(QCalendarWidget.ShortDayNames)
+    calendar.setMinimumSize(336, 292)
+    calendar.setStyleSheet(CALENDAR_QSS)
+
+    header_format = calendar.headerTextFormat()
+    header_format.setForeground(QColor("#64748b"))
+    header_format.setFontWeight(QFont.Bold)
+    calendar.setHeaderTextFormat(header_format)
+
+    weekday_format = calendar.weekdayTextFormat(Qt.Monday)
+    weekday_format.setForeground(QColor("#334155"))
+    weekday_format.setFontWeight(QFont.DemiBold)
+    for day in [Qt.Monday, Qt.Tuesday, Qt.Wednesday, Qt.Thursday, Qt.Friday]:
+        calendar.setWeekdayTextFormat(day, weekday_format)
+
+    weekend_format = calendar.weekdayTextFormat(Qt.Saturday)
+    weekend_format.setForeground(QColor("#be123c"))
+    weekend_format.setFontWeight(QFont.DemiBold)
+    calendar.setWeekdayTextFormat(Qt.Saturday, weekend_format)
+    calendar.setWeekdayTextFormat(Qt.Sunday, weekend_format)
+
+    today_format = calendar.dateTextFormat(QDate.currentDate())
+    today_format.setForeground(QColor("#1d4ed8"))
+    today_format.setBackground(QColor("#eff6ff"))
+    today_format.setFontWeight(QFont.Bold)
+    calendar.setDateTextFormat(QDate.currentDate(), today_format)
+    return calendar
+
+
 def make_date_edit(value: str = "") -> QDateEdit:
     normalized = normalize_ui_date(value) or today()
     edit = QDateEdit()
     edit.setCalendarPopup(True)
     edit.setDisplayFormat("yyyy-MM-dd")
+    edit.setCalendarWidget(configure_calendar(QCalendarWidget(edit)))
     qdate = QDate.fromString(normalized, "yyyy-MM-dd")
     edit.setDate(qdate if qdate.isValid() else QDate.currentDate())
     return edit
@@ -1227,12 +1328,9 @@ class MainWindow(QMainWindow):
         next_btn = QPushButton("后一天")
         today_btn = QPushButton("今天")
         initial_date = normalize_ui_date(self.workspace.selectedDate) or today()
-        date_input = QDateEdit()
-        date_input.setDisplayFormat("yyyy-MM-dd")
-        date_input.setCalendarPopup(True)
-        date_input.setMaximumWidth(150)
-        initial_qdate = QDate.fromString(initial_date, "yyyy-MM-dd")
-        date_input.setDate(initial_qdate if initial_qdate.isValid() else QDate.currentDate())
+        date_input = make_date_edit(initial_date)
+        date_input.setMaximumWidth(158)
+        date_input.setToolTip("选择每日任务总览日期")
         stats_label = QLabel("")
         stats_label.setStyleSheet("color:#334155;font-weight:800;")
         control_row.addWidget(QLabel("日期"))
