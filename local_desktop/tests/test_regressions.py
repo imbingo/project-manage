@@ -9,9 +9,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from openpyxl import load_workbook
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCalendarWidget, QDateEdit
+from PySide6.QtWidgets import QApplication, QCalendarWidget, QDateEdit, QStackedWidget
 
-from src.app import ArchiveDialog, DailyDialog, InboxTaskDialog, ProjectDialog, TaskDialog
+from src.app import ArchiveDialog, DailyDialog, InboxTaskDialog, MainWindow, ProjectDialog, TaskDialog
 from src.import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json, normalize_workspace
 from src.metrics import normalize_date, task_end_date
 from src.models import APP_VERSION, DailyLog, ProgressEntry, Project, Task, Workspace
@@ -218,3 +218,17 @@ def test_core_date_fields_use_calendar_widgets():
     assert project_dialog.values()["deadline"] == "2026-06-30"
     assert task_dialog.values()["startDate"] == "2026-06-01"
     assert daily_dialog.values()["date"] == "2026-06-02"
+
+
+def test_sidebar_navigation_uses_embedded_pages():
+    app()
+    window = MainWindow()
+
+    for name in ["总览", "项目看板", "待归档任务", "项目档案", "任务表格", "日报记录", "风险看板", "数据中心"]:
+        window.navigate_to(name)
+        assert window.active_page_name == name
+        assert isinstance(window.page_stack, QStackedWidget)
+        assert window.page_stack.currentWidget() is window.page_widgets[name]
+
+    window.navigate_to("任务计划")
+    assert window.page_stack.currentWidget() is window.page_widgets["任务计划"]

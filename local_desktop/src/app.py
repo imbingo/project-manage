@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QPoint, QRectF, QSize, Qt
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
+from PySide6.QtCore import QDate, QEvent, QPoint, QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractScrollArea,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QSpinBox,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -75,41 +77,94 @@ STATUS_COLORS = {"Open": "#64748b", "Ongoing": "#2563eb", "Closed": "#0f766e"}
 
 
 QSS = """
-QMainWindow { background: #f6f8fb; }
-QWidget { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial; font-size: 13px; color: #111827; }
+QMainWindow { background: #eceff3; }
+QDialog, QMessageBox { background: #eceff3; }
+QWidget { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial; font-size: 13px; color: #2b333c; }
+#centralRoot { background: #eceff3; }
+#appBar { background: #ffffff; border-bottom: 1px solid #e7ebef; }
+#brandDot { background: #2f6db0; border-radius: 5px; }
+#appTitle { color: #1f2933; font-size: 15px; font-weight: 900; }
+#verPill {
+  color: #2f6db0; background: #eaf1f9; border: 1px solid #d6e5f4;
+  border-radius: 9px; padding: 2px 8px; font-size: 11px; font-weight: 900;
+}
+#appPageLabel { color: #6b7682; font-size: 12px; font-weight: 800; }
+#bodyRoot { background: #eceff3; }
 QPushButton, QToolButton {
-  border: 1px solid #d8dee8; border-radius: 11px; padding: 8px 13px;
-  background: #ffffff; color: #334155; font-weight: 800;
+  border: 1px solid #dde2e7; border-radius: 7px; padding: 7px 12px;
+  background: #ffffff; color: #46505a; font-weight: 800;
 }
-QPushButton:hover, QToolButton:hover { background: #f8fafc; border-color: #cbd5e1; }
-QPushButton#primary { background: #111827; color: white; border-color: #111827; }
-QPushButton#alt { background: #0f766e; color: white; border-color: #0f766e; }
+QPushButton:hover, QToolButton:hover { border-color: #2f6db0; color: #2f6db0; background: #ffffff; }
+QPushButton:disabled, QToolButton:disabled { color: #b6bdc4; border-color: #e9edf1; }
+QPushButton#primary { background: #2f6db0; color: white; border-color: #2f6db0; font-weight: 900; }
+QPushButton#primary:hover { background: #285f9a; color: white; }
+QPushButton#alt { background: #eaf1f9; color: #2f6db0; border-color: #d2e2f3; font-weight: 900; }
+QPushButton#alt:hover { background: #dceaf7; color: #2f6db0; }
+QPushButton#danger { background: #ffffff; border-color: #ecc9c6; color: #b4453a; font-weight: 900; }
+QPushButton#danger:hover { background: #fbf0ef; color: #b4453a; }
+QPushButton#winBtn {
+  background: transparent; border: none; border-radius: 6px; color: #5b6672;
+  font-size: 14px; padding: 0;
+}
+QPushButton#winBtn:hover { background: #eef2f6; color: #1f2933; }
+QPushButton#winClose {
+  background: transparent; border: none; border-radius: 6px; color: #5b6672;
+  font-size: 13px; padding: 0;
+}
+QPushButton#winClose:hover { background: #e15b4d; color: #ffffff; }
 QComboBox, QDateEdit, QLineEdit, QSpinBox {
-  min-height: 32px; padding: 6px 11px; border: 1px solid #d8dee8; border-radius: 10px; background: white;
+  min-height: 28px; padding: 5px 9px; border: 1px solid #d9dee3;
+  border-radius: 6px; background: #ffffff; color: #2b333c;
 }
-QTextEdit { border: 1px solid #d8dee8; border-radius: 10px; background: white; padding: 6px; }
-QFrame#sidebar { background: #0f172a; border-radius: 26px; }
-QFrame#topbar, QFrame#panel, QFrame#card, QFrame#darkCard, QFrame#focusCard, QFrame#detailBox {
-  background: #ffffff; border: 1px solid #e6eaf0; border-radius: 18px;
+QComboBox:disabled, QDateEdit:disabled, QLineEdit:disabled, QSpinBox:disabled {
+  color: #b6bdc4; background: #f6f8fa;
 }
-QFrame#darkCard { background: #101827; border-color: #101827; }
-QFrame#detailBox { background: #f8fafc; }
+QComboBox::drop-down, QDateEdit::drop-down, QSpinBox::up-button, QSpinBox::down-button {
+  subcontrol-origin: padding; subcontrol-position: center right; width: 20px; border: none;
+}
+QComboBox QAbstractItemView {
+  background: #ffffff; border: 1px solid #d9dee3; border-radius: 8px;
+  padding: 5px; selection-background-color: #eaf1f9; selection-color: #2f6db0;
+  outline: 0;
+}
+QTextEdit { border: 1px solid #d9dee3; border-radius: 8px; background: white; padding: 7px; }
+QFrame#sidebar {
+  background: #ffffff; border: 1px solid #e7ebef; border-radius: 12px;
+}
+QFrame#topbar, QFrame#panel, QFrame#card, QFrame#darkCard, QFrame#focusCard, QFrame#detailBox, QFrame#pagePanel {
+  background: #ffffff; border: 1px solid #e9edf1; border-radius: 12px;
+}
+QFrame#darkCard { background: #eaf3fd; border-color: #cbe0f4; }
+QFrame#detailBox { background: #f7f9fc; }
+QLabel#sectionCaption { color: #5b6672; font-weight: 900; font-size: 11px; letter-spacing: 1px; }
+QLabel#pageTitle { color: #1f2933; font-size: 22px; font-weight: 900; }
+QLabel#pageDesc { color: #6b7682; }
+QLabel#metricTitle { color: #7e8893; font-size: 11px; font-weight: 900; }
+QLabel#metricValue { color: #14202c; font-size: 24px; font-weight: 900; }
+QLabel#metricValueAccent { color: #2f6db0; font-size: 24px; font-weight: 900; }
 QTableWidget {
-  background: #ffffff; border: 0; gridline-color: #eef2f7;
-  selection-background-color: #dbeafe; alternate-background-color: #fbfdff;
+  background: #ffffff; border: 1px solid #e9edf1; border-radius: 10px; gridline-color: #eef2f6;
+  selection-background-color: #eaf1f9; alternate-background-color: #f8fafc;
   font-size: 13px;
 }
 QHeaderView::section {
-  background: #f8fafc; color: #475569; padding: 10px 8px; border: 0;
+  background: #f6f8fa; color: #5b6672; padding: 10px 8px; border: 0;
   font-weight: 900; font-size: 12px;
 }
 QProgressBar {
-  border: 0; border-radius: 5px; background: #e5e7eb; height: 10px; text-align: center;
+  border: 0; border-radius: 5px; background: #e6ebf1; height: 10px; text-align: center;
 }
-QProgressBar::chunk { border-radius: 5px; background: #0f766e; }
+QProgressBar::chunk { border-radius: 5px; background: #2f6db0; }
+QTabWidget::pane { border: 1px solid #e7ebef; background: #ffffff; border-radius: 8px; top: -1px; }
+QTabBar::tab {
+  background: #eef1f4; color: #7a858f; padding: 8px 18px;
+  border: 1px solid #e3e7eb; border-bottom: none;
+  border-top-left-radius: 7px; border-top-right-radius: 7px; font-weight: 900;
+}
+QTabBar::tab:selected { background: #ffffff; color: #1f2933; }
 QMenu { background: #ffffff; border: 1px solid #d8dee8; border-radius: 10px; padding: 6px; }
 QMenu::item { padding: 9px 18px; border-radius: 7px; }
-QMenu::item:selected { background: #eff6ff; color: #2563eb; }
+QMenu::item:selected { background: #eaf1f9; color: #2f6db0; }
 """
 
 
@@ -253,6 +308,45 @@ def make_date_edit(value: str = "") -> QDateEdit:
 
 def date_edit_text(edit: QDateEdit) -> str:
     return edit.date().toString("yyyy-MM-dd")
+
+
+def make_arrow_png(direction: str = "down", color: str = "#8a949e", size: int = 22) -> str | None:
+    try:
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        pen = QPen(QColor(color))
+        pen.setWidthF(size * 0.11)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        pad = size * 0.30
+        center_x = size / 2.0
+        if direction == "down":
+            a, b, c = QPointF(pad, size * 0.40), QPointF(center_x, size * 0.62), QPointF(size - pad, size * 0.40)
+        else:
+            a, b, c = QPointF(pad, size * 0.60), QPointF(center_x, size * 0.38), QPointF(size - pad, size * 0.60)
+        painter.drawLine(a, b)
+        painter.drawLine(b, c)
+        painter.end()
+        path = Path(tempfile.gettempdir()) / f"project_desk_chevron_{direction}.png"
+        pixmap.save(str(path))
+        return str(path).replace("\\", "/")
+    except Exception:
+        return None
+
+
+def app_stylesheet() -> str:
+    down = make_arrow_png("down")
+    up = make_arrow_png("up")
+    if not down or not up:
+        return QSS
+    return QSS + (
+        "QComboBox::down-arrow, QDateEdit::down-arrow { image: url(%s); width: 11px; height: 11px; margin-right: 5px; }"
+        "QSpinBox::up-arrow { image: url(%s); width: 9px; height: 9px; }"
+        "QSpinBox::down-arrow { image: url(%s); width: 9px; height: 9px; }"
+    ) % (down, up, down)
 
 
 class ProjectDialog(QDialog):
@@ -560,21 +654,22 @@ class Sidebar(QFrame):
         self.active_name = "总览"
         self.buttons: dict[str, QPushButton] = {}
         self.setObjectName("sidebar")
-        self.setFixedWidth(236)
+        self.setFixedWidth(230)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 24, 18, 24)
-        layout.setSpacing(12)
+        layout.setContentsMargins(14, 18, 14, 18)
+        layout.setSpacing(8)
 
         logo_row = QHBoxLayout()
         title_box = QVBoxLayout()
         product = QLabel("Project Desk")
-        product.setStyleSheet("color:white;font-size:19px;font-weight:900;")
+        product.setStyleSheet("color:#1f2933;font-size:18px;font-weight:900;")
         sub = QLabel("Local Workspace")
-        sub.setStyleSheet("color:#94a3b8;font-size:11px;")
+        sub.setStyleSheet("color:#8a949e;font-size:11px;font-weight:800;")
         title_box.addWidget(product)
         title_box.addWidget(sub)
-        logo = QLabel("▰")
-        logo.setStyleSheet("color:#22c55e;font-size:24px;font-weight:900;")
+        logo = QLabel()
+        logo.setObjectName("brandDot")
+        logo.setFixedSize(10, 10)
         logo_row.addLayout(title_box)
         logo_row.addStretch()
         logo_row.addWidget(logo)
@@ -591,15 +686,15 @@ class Sidebar(QFrame):
 
         layout.addStretch()
         health = QFrame()
-        health.setStyleSheet("background:#111827;border:1px solid #1f2937;border-radius:18px;")
+        health.setStyleSheet("background:#f7f9fc;border:1px solid #e6ebf1;border-radius:12px;")
         health_layout = QVBoxLayout(health)
-        health_layout.setContentsMargins(16, 16, 16, 16)
+        health_layout.setContentsMargins(14, 13, 14, 13)
         label = QLabel("项目健康度")
-        label.setStyleSheet("color:#94a3b8;font-weight:800;")
+        label.setStyleSheet("color:#7e8893;font-weight:900;font-size:11px;")
         self.health_value = QLabel("良好")
-        self.health_value.setStyleSheet("color:#22c55e;font-size:28px;font-weight:900;")
+        self.health_value.setStyleSheet("color:#2f6db0;font-size:26px;font-weight:900;")
         self.health_detail = QLabel("暂无异常")
-        self.health_detail.setStyleSheet("color:#cbd5e1;")
+        self.health_detail.setStyleSheet("color:#6b7682;")
         health_layout.addWidget(label)
         health_layout.addWidget(self.health_value)
         health_layout.addWidget(self.health_detail)
@@ -629,21 +724,21 @@ class Sidebar(QFrame):
         for key, button in self.buttons.items():
             if key == name:
                 button.setStyleSheet(
-                    "QPushButton { background:#1d4ed8;color:white;border:0;border-radius:14px;"
-                    "padding:13px 12px;text-align:left;font-weight:900; }"
-                    "QPushButton:hover { background:#2563eb; }"
+                    "QPushButton { background:#eaf1f9;color:#2f6db0;border:1px solid #cfe0f1;border-radius:10px;"
+                    "padding:11px 11px;text-align:left;font-weight:900; }"
+                    "QPushButton:hover { background:#dceaf7;color:#2f6db0; }"
                 )
             else:
                 button.setStyleSheet(
-                    "QPushButton { background:transparent;color:#cbd5e1;border:0;border-radius:14px;"
-                    "padding:13px 12px;text-align:left;font-weight:700; }"
-                    "QPushButton:hover { background:#1e293b;color:white; }"
+                    "QPushButton { background:transparent;color:#5b6672;border:1px solid transparent;border-radius:10px;"
+                    "padding:11px 11px;text-align:left;font-weight:800; }"
+                    "QPushButton:hover { background:#f6f8fa;border-color:#eef1f4;color:#2f6db0; }"
                 )
 
     def update_health(self, overdue: int, lagging: int) -> None:
         if overdue or lagging:
             self.health_value.setText("注意")
-            self.health_value.setStyleSheet("color:#d97706;font-size:28px;font-weight:900;")
+            self.health_value.setStyleSheet("color:#b45309;font-size:26px;font-weight:900;")
             parts = []
             if overdue:
                 parts.append(f"{overdue}项逾期")
@@ -942,6 +1037,7 @@ class MainWindow(QMainWindow):
         QApplication.instance().setFont(QFont("Microsoft YaHei UI", 10))
         self.workspace: Workspace = load_workspace()
         self.selected_task_id: str | None = None
+        self.active_page_name = "任务计划"
         self.setWindowTitle("Project_Manage_LocalV3.1")
         self.resize(1680, 980)
         self.setMinimumSize(1280, 760)
@@ -956,12 +1052,79 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget()
-        root_layout = QHBoxLayout(root)
-        root_layout.setContentsMargins(18, 18, 18, 18)
-        root_layout.setSpacing(18)
-        self.sidebar = Sidebar(self.navigate_to)
-        root_layout.addWidget(self.sidebar)
+        root.setObjectName("centralRoot")
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        appbar = self._build_appbar()
+        self._appbar = appbar
+        appbar.installEventFilter(self)
+        root_layout.addWidget(appbar)
 
+        body = QWidget()
+        body.setObjectName("bodyRoot")
+        self._body = body
+        body.installEventFilter(self)
+        body_layout = QHBoxLayout(body)
+        body_layout.setContentsMargins(12, 12, 12, 12)
+        body_layout.setSpacing(12)
+        self.sidebar = Sidebar(self.navigate_to)
+        body_layout.addWidget(self.sidebar)
+
+        self.page_stack = QStackedWidget()
+        self.page_widgets: dict[str, QWidget] = {}
+        task_page = self._build_task_plan_page()
+        self.page_widgets["任务计划"] = task_page
+        self.page_stack.addWidget(task_page)
+        body_layout.addWidget(self.page_stack, 1)
+        root_layout.addWidget(body, 1)
+
+        self.setCentralWidget(root)
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        self.statusBar().setSizeGripEnabled(True)
+        self.sidebar.set_active("任务计划")
+
+    def _build_appbar(self) -> QWidget:
+        appbar = QWidget()
+        appbar.setObjectName("appBar")
+        appbar.setFixedHeight(50)
+        layout = QHBoxLayout(appbar)
+        layout.setContentsMargins(16, 0, 14, 0)
+        layout.setSpacing(9)
+        dot = QLabel()
+        dot.setObjectName("brandDot")
+        dot.setFixedSize(10, 10)
+        title = QLabel("Project Desk")
+        title.setObjectName("appTitle")
+        version = QLabel(APP_VERSION)
+        version.setObjectName("verPill")
+        self.appbar_page_label = QLabel("任务计划")
+        self.appbar_page_label.setObjectName("appPageLabel")
+        layout.addWidget(dot)
+        layout.addWidget(title)
+        layout.addWidget(version)
+        layout.addSpacing(8)
+        layout.addWidget(self.appbar_page_label)
+        layout.addStretch()
+        min_button = QPushButton("-")
+        max_button = QPushButton("□")
+        close_button = QPushButton("x")
+        self.btn_win_max = max_button
+        for button in [min_button, max_button]:
+            button.setObjectName("winBtn")
+            button.setFixedSize(36, 28)
+            button.setFocusPolicy(Qt.NoFocus)
+            layout.addWidget(button)
+        close_button.setObjectName("winClose")
+        close_button.setFixedSize(36, 28)
+        close_button.setFocusPolicy(Qt.NoFocus)
+        layout.addWidget(close_button)
+        min_button.clicked.connect(self.showMinimized)
+        max_button.clicked.connect(self._toggle_max_restore)
+        close_button.clicked.connect(self.close)
+        return appbar
+
+    def _build_task_plan_page(self) -> QWidget:
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -971,8 +1134,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(self._build_briefs_and_focus())
         layout.addWidget(self._build_plan_panel(), 5)
         layout.addWidget(self._build_bottom_area(), 0)
-        root_layout.addWidget(content, 1)
-        self.setCentralWidget(root)
+        return content
 
     def _build_topbar(self) -> QFrame:
         top = QFrame()
@@ -1019,6 +1181,7 @@ class MainWindow(QMainWindow):
     def _menu_button(self, label: str, items: list[tuple[str, object]]) -> QToolButton:
         button = QToolButton()
         button.setText(label)
+        button.setFixedHeight(30)
         button.setPopupMode(QToolButton.InstantPopup)
         menu = QMenu(button)
         for text, handler in items:
@@ -1027,6 +1190,68 @@ class MainWindow(QMainWindow):
             menu.addAction(action)
         button.setMenu(menu)
         return button
+
+    def _toggle_max_restore(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+            self.btn_win_max.setText("□")
+        else:
+            self.showMaximized()
+            self.btn_win_max.setText("❐")
+
+    def _resize_edge_at(self, global_pos: QPoint) -> Qt.Edge | None:
+        if self.isMaximized():
+            return None
+        point = self.mapFromGlobal(global_pos)
+        rect = self.rect()
+        margin = 6
+        edges = None
+        if point.x() <= margin:
+            edges = Qt.Edge.LeftEdge
+        elif point.x() >= rect.width() - margin:
+            edges = Qt.Edge.RightEdge
+        if point.y() <= margin:
+            edges = Qt.Edge.TopEdge if edges is None else edges | Qt.Edge.TopEdge
+        elif point.y() >= rect.height() - margin:
+            edges = Qt.Edge.BottomEdge if edges is None else edges | Qt.Edge.BottomEdge
+        return edges
+
+    @staticmethod
+    def _cursor_for_edges(edges) -> Qt.CursorShape:
+        left = bool(edges & Qt.Edge.LeftEdge)
+        right = bool(edges & Qt.Edge.RightEdge)
+        top = bool(edges & Qt.Edge.TopEdge)
+        bottom = bool(edges & Qt.Edge.BottomEdge)
+        if (left and top) or (right and bottom):
+            return Qt.CursorShape.SizeFDiagCursor
+        if (right and top) or (left and bottom):
+            return Qt.CursorShape.SizeBDiagCursor
+        if left or right:
+            return Qt.CursorShape.SizeHorCursor
+        return Qt.CursorShape.SizeVerCursor
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is getattr(self, "_appbar", None):
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                window = self.windowHandle()
+                if window is not None:
+                    window.startSystemMove()
+                    return True
+            if event.type() == QEvent.Type.MouseButtonDblClick:
+                self._toggle_max_restore()
+                return True
+        elif obj is getattr(self, "_body", None):
+            if event.type() == QEvent.Type.MouseMove and not (event.buttons() & Qt.MouseButton.LeftButton):
+                edges = self._resize_edge_at(event.globalPosition().toPoint())
+                obj.setCursor(self._cursor_for_edges(edges) if edges else Qt.CursorShape.ArrowCursor)
+            elif event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                edges = self._resize_edge_at(event.globalPosition().toPoint())
+                if edges is not None:
+                    window = self.windowHandle()
+                    if window is not None:
+                        window.startSystemResize(edges)
+                        return True
+        return super().eventFilter(obj, event)
 
     def _build_status_cards(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -1254,33 +1479,770 @@ class MainWindow(QMainWindow):
 
     def _add_shadow(self, widget: QWidget) -> None:
         shadow = QGraphicsDropShadowEffect(widget)
-        shadow.setBlurRadius(20)
-        shadow.setOffset(0, 5)
-        shadow.setColor(QColor(15, 23, 42, 22))
+        shadow.setBlurRadius(22)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(18, 28, 40, 34))
         widget.setGraphicsEffect(shadow)
 
-    def navigate_to(self, name: str) -> None:
-        if name == "总览":
-            self.open_overview_view()
+    def _page_shell(self, title: str, desc: str) -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(10)
+        panel = QFrame()
+        panel.setObjectName("pagePanel")
+        self._add_shadow(panel)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+        caption = QLabel("PROJECT DESK")
+        caption.setObjectName("sectionCaption")
+        heading = QLabel(title)
+        heading.setObjectName("pageTitle")
+        body = QLabel(desc)
+        body.setObjectName("pageDesc")
+        body.setWordWrap(True)
+        layout.addWidget(caption)
+        layout.addWidget(heading)
+        layout.addWidget(body)
+        outer.addWidget(panel, 1)
+        return page, layout
+
+    def _make_table(self, headers: list[str]) -> QTableWidget:
+        table = QTableWidget()
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(42)
+        table.horizontalHeader().setStretchLastSection(True)
+        return table
+
+    def _fill_table(self, table: QTableWidget, rows: list[list[str]], row_ids: list[object] | None = None) -> None:
+        table.setRowCount(len(rows))
+        for row_index, row_values in enumerate(rows):
+            for col_index, value in enumerate(row_values):
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
+                if row_ids is not None:
+                    item.setData(Qt.UserRole, row_ids[row_index])
+                table.setItem(row_index, col_index, item)
+            table.setRowHeight(row_index, 42)
+        table.resizeColumnsToContents()
+
+    def _switch_to_task_plan(self, project_id: str | None = None, task_id: str | None = None) -> None:
+        if project_id:
+            self.workspace.selectedProjectId = project_id
+        self.selected_task_id = task_id
+        save_workspace(self.workspace)
+        self.refresh()
+        self.navigate_to("任务计划")
+
+    def _show_page(self, name: str, builder) -> None:
+        if name != "任务计划":
+            old = self.page_widgets.get(name)
+            if old is not None:
+                self.page_stack.removeWidget(old)
+                old.deleteLater()
+            page = builder()
+            self.page_widgets[name] = page
+            self.page_stack.addWidget(page)
+        self.active_page_name = name
+        self.appbar_page_label.setText(name)
+        self.sidebar.set_active(name)
+        self.page_stack.setCurrentWidget(self.page_widgets[name])
+
+    def _rebuild_active_page(self) -> None:
+        if not hasattr(self, "page_stack") or self.active_page_name == "任务计划":
             return
+        builders = self._page_builders()
+        builder = builders.get(self.active_page_name)
+        if builder:
+            self._show_page(self.active_page_name, builder)
+
+    def _page_builders(self) -> dict[str, object]:
+        return {
+            "总览": self._build_overview_page,
+            "项目看板": self._build_project_board_page,
+            "待归档任务": self._build_inbox_page,
+            "项目档案": self._build_archive_page,
+            "任务表格": self._build_task_table_page,
+            "日报记录": self._build_daily_log_page,
+            "风险看板": self._build_risk_board_page,
+            "数据中心": self._build_data_center_page,
+        }
+
+    def navigate_to(self, name: str) -> None:
         if name == "任务计划":
+            self.active_page_name = name
+            self.appbar_page_label.setText(name)
+            self.sidebar.set_active(name)
+            self.page_stack.setCurrentWidget(self.page_widgets["任务计划"])
             self.plan_filter_label.setText("任务计划")
             self.plan.setFocus()
             return
-        if name == "项目看板":
-            self.open_project_board_view()
-        elif name == "待归档任务":
-            self.open_inbox_view()
-        elif name == "项目档案":
-            self.open_archive_view()
-        elif name == "任务表格":
-            self.open_task_table_view()
-        elif name == "日报记录":
-            self.open_daily_log_view()
-        elif name == "风险看板":
-            self.open_risk_board_view()
-        elif name == "数据中心":
-            self.open_data_center_view()
+        builder = self._page_builders().get(name)
+        if builder:
+            self._show_page(name, builder)
+
+    def _build_overview_page(self) -> QWidget:
+        page, layout = self._page_shell(
+            "每日任务总览",
+            "跨项目查看选中日期需要处理的任务。日期范围覆盖当天、今日截止、已逾期未关闭，或当天已有日报记录的任务都会显示。",
+        )
+        control_row = QHBoxLayout()
+        prev_btn = QPushButton("前一天")
+        today_btn = QPushButton("今天")
+        next_btn = QPushButton("后一天")
+        date_input = make_date_edit(normalize_ui_date(self.workspace.selectedDate) or today())
+        date_input.setMaximumWidth(156)
+        stats_label = QLabel("")
+        stats_label.setStyleSheet("color:#46505a;font-weight:900;")
+        control_row.addWidget(QLabel("日期"))
+        control_row.addWidget(date_input)
+        control_row.addWidget(prev_btn)
+        control_row.addWidget(today_btn)
+        control_row.addWidget(next_btn)
+        control_row.addStretch()
+        control_row.addWidget(stats_label)
+        layout.addLayout(control_row)
+
+        table = self._make_table(["项目", "关注", "风险", "任务", "负责人", "任务周期", "状态", "计划", "实际", "今日日报", "操作提示"])
+        layout.addWidget(table, 1)
+        rendered: list[tuple[Project, Task, DailyLog | None, str]] = []
+
+        def safe_parse(value: str, fallback_year: int | None = None) -> date | None:
+            normalized = normalize_ui_date(value, fallback_year=fallback_year)
+            if not normalized:
+                return None
+            try:
+                return date.fromisoformat(normalized)
+            except Exception:
+                return None
+
+        def log_for(project: Project, task: Task, value: str) -> DailyLog | None:
+            normalized_value = normalize_ui_date(value) or value
+            return next((log for log in project.dailyLogs if log.taskId == task.id and (normalize_ui_date(log.date) or log.date) == normalized_value), None)
+
+        def classify(project: Project, task: Task, value: str) -> tuple[list[str], DailyLog | None, int]:
+            selected = safe_parse(value)
+            fallback_year = selected.year if selected else None
+            start = safe_parse(task.startDate, fallback_year=fallback_year)
+            try:
+                end_text = task_end_date(task)
+            except Exception:
+                end_text = ""
+            end = safe_parse(end_text, fallback_year=fallback_year)
+            log = log_for(project, task, value)
+            if not selected or not start or not end:
+                return (["日期异常"] if log else []), log, 99
+            active = start <= selected <= end and task.status != "Closed"
+            due_today = end == selected and task.status != "Closed"
+            overdue = end < selected and task.status != "Closed"
+            has_log = log is not None
+            if not (active or due_today or overdue or has_log):
+                return [], log, 99
+            reasons: list[str] = []
+            priority = 50
+            if overdue:
+                reasons.append("逾期")
+                priority = min(priority, 1)
+            if task.risk == "H" and task.status != "Closed":
+                reasons.append("高风险")
+                priority = min(priority, 2)
+            if due_today:
+                reasons.append("今日截止")
+                priority = min(priority, 3)
+            if active and not has_log:
+                reasons.append("待写日报")
+                priority = min(priority, 4)
+            if has_log:
+                reasons.append("已有日报" if log.result != "延期" else "日报延期")
+                priority = min(priority, 5 if log.result != "延期" else 2)
+            return reasons or ["今日相关"], log, priority
+
+        def render() -> None:
+            selected_date = date_input.date().toString("yyyy-MM-dd")
+            self.workspace.selectedDate = selected_date
+            rendered.clear()
+            collected: list[tuple[int, Project, Task, DailyLog | None, str]] = []
+            for project in self.workspace.projects:
+                for task in project.tasks:
+                    reasons, log, priority = classify(project, task, selected_date)
+                    if reasons:
+                        collected.append((priority, project, task, log, " / ".join(reasons)))
+            collected.sort(key=lambda item: (item[0], item[1].deadline, item[2].risk != "H", task_end_date(item[2]), item[1].name, item[2].title))
+            rendered.extend([(project, task, log, reason) for _priority, project, task, log, reason in collected])
+            table.setRowCount(len(rendered))
+            overdue_num = sum(1 for _p, _t, _l, reason in rendered if "逾期" in reason)
+            high_num = sum(1 for _p, task, _l, _r in rendered if task.risk == "H" and task.status != "Closed")
+            missing_log = sum(1 for _p, _t, log, reason in rendered if log is None and "待写日报" in reason)
+            stats_label.setText(f"今日相关 {len(rendered)} 项 · 逾期 {overdue_num} · 高风险 {high_num} · 待写日报 {missing_log}")
+            for row, (project, task, log, reason) in enumerate(rendered):
+                entry = latest_entry(task)
+                log_text = "未写" if log is None else log.result
+                values = [
+                    project.name,
+                    reason,
+                    task.risk,
+                    task.title,
+                    task.responsible,
+                    f"{normalize_ui_date(task.startDate) or task.startDate} ~ {task_end_date(task)}",
+                    STATUS_LABELS.get(task.status, task.status),
+                    f"{entry.plannedProgress}%",
+                    f"{entry.actualProgress}%",
+                    log_text,
+                    "双击进入任务计划；下方可写日报/编辑任务",
+                ]
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(str(value))
+                    if "逾期" in reason:
+                        item.setBackground(QColor("#fee2e2"))
+                    elif "高风险" in reason:
+                        item.setBackground(QColor("#fff7ed"))
+                    elif log_text == "未写":
+                        item.setBackground(QColor("#eaf1f9"))
+                    table.setItem(row, col, item)
+                table.setRowHeight(row, 42)
+            table.resizeColumnsToContents()
+            table.setColumnWidth(0, 180)
+            table.setColumnWidth(1, 150)
+            table.setColumnWidth(3, 300)
+            table.setColumnWidth(10, 280)
+
+        def selected_pair() -> tuple[Project | None, Task | None]:
+            row = table.currentRow()
+            if row < 0 or row >= len(rendered):
+                return None, None
+            project, task, _log, _reason = rendered[row]
+            return project, task
+
+        def enter_project() -> None:
+            project, task = selected_pair()
+            if not project or not task:
+                QMessageBox.information(page, "请选择任务", "请先选中一条每日任务。")
+                return
+            self.workspace.selectedDate = date_input.date().toString("yyyy-MM-dd")
+            self._switch_to_task_plan(project.id, task.id)
+
+        def write_daily() -> None:
+            project, task = selected_pair()
+            if not project or not task:
+                QMessageBox.information(page, "请选择任务", "请先选中一条每日任务。")
+                return
+            self.workspace.selectedDate = date_input.date().toString("yyyy-MM-dd")
+            self._switch_to_task_plan(project.id, task.id)
+            self.add_daily()
+
+        def edit_selected_task() -> None:
+            project, task = selected_pair()
+            if not project or not task:
+                QMessageBox.information(page, "请选择任务", "请先选中一条每日任务。")
+                return
+            self._switch_to_task_plan(project.id, task.id)
+            self.edit_task()
+
+        prev_btn.clicked.connect(lambda _checked=False: date_input.setDate(date_input.date().addDays(-1)))
+        today_btn.clicked.connect(lambda _checked=False: date_input.setDate(QDate.currentDate()))
+        next_btn.clicked.connect(lambda _checked=False: date_input.setDate(date_input.date().addDays(1)))
+        date_input.dateChanged.connect(lambda _date: render())
+        table.itemDoubleClicked.connect(lambda _item: enter_project())
+
+        actions = QHBoxLayout()
+        for label, handler, obj in [("进入项目任务计划", enter_project, "primary"), ("写日报", write_daily, "alt"), ("编辑任务", edit_selected_task, "")]:
+            button = QPushButton(label)
+            if obj:
+                button.setObjectName(obj)
+            button.clicked.connect(handler)
+            actions.addWidget(button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        render()
+        return page
+
+    def _build_project_board_page(self) -> QWidget:
+        page, layout = self._page_shell(
+            "项目看板",
+            "集中查看所有项目的 deadline、计划/实际进度、逾期任务、任务完成情况和档案数量。双击项目即可切换到任务计划。",
+        )
+        table = self._make_table(["项目", "Deadline", "剩余/逾期", "计划", "实际", "任务数", "已关闭", "逾期", "档案", "一句话总结"])
+        rows = []
+        ids = []
+        for project in self.workspace.projects:
+            planned, actual = project_progress(project)
+            closed = sum(1 for task in project.tasks if task.status == "Closed")
+            try:
+                remain = days_between(today(), project.deadline)
+                remain_text = f"剩余 {remain} 天" if remain >= 0 else f"逾期 {abs(remain)} 天"
+            except Exception:
+                remain_text = "-"
+            ids.append(project.id)
+            rows.append([project.name, project.deadline, remain_text, f"{planned}%", f"{actual}%", str(len(project.tasks)), str(closed), str(overdue_count(project)), str(len(project.archives)), project.summary])
+        self._fill_table(table, rows, ids)
+        table.setColumnWidth(0, 220)
+        table.setColumnWidth(9, 360)
+        for row in range(table.rowCount()):
+            if "逾期" in table.item(row, 2).text():
+                for col in range(table.columnCount()):
+                    table.item(row, col).setBackground(QColor("#fee2e2"))
+        layout.addWidget(table, 1)
+
+        def switch_project() -> None:
+            row = table.currentRow()
+            if row < 0:
+                return
+            item = table.item(row, 0)
+            project_id = item.data(Qt.UserRole) if item else None
+            if project_id:
+                self._switch_to_task_plan(project_id)
+
+        table.itemDoubleClicked.connect(lambda _item: switch_project())
+        row = QHBoxLayout()
+        button = QPushButton("切换到项目")
+        button.setObjectName("primary")
+        button.clicked.connect(switch_project)
+        row.addWidget(button)
+        row.addStretch()
+        layout.addLayout(row)
+        return page
+
+    def _build_task_table_page(self) -> QWidget:
+        page, layout = self._page_shell("任务表格", "当前项目的任务台账表格视图，适合快速扫描负责人、周期、状态、进度和备注。")
+        project = self.current_project()
+        table = self._make_table(["风险", "任务", "负责人", "开始", "工期", "结束", "状态", "计划", "实际", "完成日", "备注"])
+        if project:
+            rows = []
+            ids = []
+            for task, depth in ordered_tasks(project.tasks):
+                entry = latest_entry(task)
+                ids.append(task.id)
+                rows.append([task.risk, "  " * depth + task.title, task.responsible, task.startDate, str(task.duration), task_end_date(task), STATUS_LABELS.get(task.status, task.status), f"{entry.plannedProgress}%", f"{entry.actualProgress}%", task.completedDate, task.note])
+            self._fill_table(table, rows, ids)
+        layout.addWidget(table, 1)
+
+        def select_current_task() -> None:
+            row = table.currentRow()
+            if row < 0:
+                return
+            item = table.item(row, 0)
+            self.selected_task_id = item.data(Qt.UserRole) if item else None
+
+        def edit_current() -> None:
+            select_current_task()
+            self.edit_task()
+
+        table.itemSelectionChanged.connect(select_current_task)
+        table.itemDoubleClicked.connect(lambda _item: edit_current())
+        actions = QHBoxLayout()
+        for label, handler, obj in [("新增任务", self.add_task, "primary"), ("编辑任务", edit_current, ""), ("删除任务", self.delete_task, "danger")]:
+            button = QPushButton(label)
+            if obj:
+                button.setObjectName(obj)
+            button.clicked.connect(handler)
+            actions.addWidget(button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        return page
+
+    def _build_archive_page(self) -> QWidget:
+        page, layout = self._page_shell(
+            "项目档案",
+            "按项目集中展示实验数据、汇报PPT、会议纪要、图片截图和交付版本；支持跨项目关键词搜索。",
+        )
+        search_row = QHBoxLayout()
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("搜索档案：项目 / 标题 / 关键词 / 摘要 / 负责人 / 类型 / 路径 / 关联任务")
+        search_input.setClearButtonEnabled(True)
+        project_filter = QComboBox()
+        project_filter.addItem("全部项目", "")
+        for item in self.workspace.projects:
+            project_filter.addItem(item.name, item.id)
+        type_filter = QComboBox()
+        type_filter.addItems(["全部类型", "实验数据", "会议纪要", "汇报PPT", "图片截图", "交付版本", "其他"])
+        status_filter = QComboBox()
+        status_filter.addItems(["全部状态", "待整理", "已归档", "已完成", "待补充", "已废弃", "已过期"])
+        result_label = QLabel()
+        result_label.setStyleSheet("color:#6b7682;font-weight:900;")
+        search_row.addWidget(search_input, 1)
+        search_row.addWidget(project_filter)
+        search_row.addWidget(type_filter)
+        search_row.addWidget(status_filter)
+        search_row.addWidget(result_label)
+        layout.addLayout(search_row)
+
+        table = self._make_table(["项目", "日期", "类型", "标题", "负责人", "关键词", "摘要/结论", "路径", "状态", "关联任务"])
+        layout.addWidget(table, 1)
+        rendered: list[tuple[Project, ArchiveItem]] = []
+
+        def task_name(project: Project, archive: ArchiveItem) -> str:
+            return next((task.title for task in project.tasks if task.id == archive.relatedTaskId), "")
+
+        def render() -> None:
+            keyword = search_input.text().strip().lower()
+            selected_project_id = project_filter.currentData()
+            selected_type = type_filter.currentText()
+            selected_status = status_filter.currentText()
+            rendered.clear()
+            total = 0
+            for project in self.workspace.projects:
+                if selected_project_id and project.id != selected_project_id:
+                    continue
+                for archive in sorted(project.archives, key=lambda item: item.date, reverse=True):
+                    total += 1
+                    related_task_name = task_name(project, archive)
+                    if selected_type != "全部类型" and archive.type != selected_type:
+                        continue
+                    if selected_status != "全部状态" and archive.status != selected_status:
+                        continue
+                    if keyword:
+                        haystack = " ".join([project.name, archive.date, archive.type, archive.title, archive.owner, archive.keywords, archive.summary, archive.path, archive.status, related_task_name]).lower()
+                        if keyword not in haystack:
+                            continue
+                    rendered.append((project, archive))
+            table.setRowCount(len(rendered))
+            result_label.setText(f"{len(rendered)} / {total} 条")
+            for row, (project, archive) in enumerate(rendered):
+                values = [project.name, archive.date, archive.type, archive.title, archive.owner, archive.keywords, archive.summary, archive.path, archive.status, task_name(project, archive)]
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(str(value))
+                    item.setData(Qt.UserRole, archive.id)
+                    item.setData(Qt.UserRole + 1, project.id)
+                    table.setItem(row, col, item)
+                table.setRowHeight(row, 42)
+            table.resizeColumnsToContents()
+            table.setColumnWidth(0, 180)
+            table.setColumnWidth(3, 240)
+            table.setColumnWidth(6, 260)
+            table.setColumnWidth(7, 260)
+
+        def selected_archive_pair() -> tuple[Project, ArchiveItem] | tuple[None, None]:
+            row = table.currentRow()
+            if row < 0 or row >= len(rendered):
+                return None, None
+            return rendered[row]
+
+        def add_item() -> None:
+            project = self.current_project() or (self.workspace.projects[0] if self.workspace.projects else None)
+            if not project:
+                return
+            dialog = ArchiveDialog(project, parent=page)
+            if dialog.exec() == QDialog.Accepted:
+                add_archive(project, dialog.values())
+                save_workspace(self.workspace)
+                render()
+                self.refresh()
+
+        def edit_item() -> None:
+            project, archive = selected_archive_pair()
+            if not project or not archive:
+                QMessageBox.information(page, "请选择档案", "请先选中一条档案记录。")
+                return
+            dialog = ArchiveDialog(project, archive, page)
+            if dialog.exec() == QDialog.Accepted:
+                update_archive(archive, dialog.values())
+                save_workspace(self.workspace)
+                render()
+                self.refresh()
+
+        def delete_item() -> None:
+            project, archive = selected_archive_pair()
+            if not project or not archive:
+                QMessageBox.information(page, "请选择档案", "请先选中一条档案记录。")
+                return
+            if QMessageBox.question(page, "确认删除", f"删除档案“{archive.title}”？") == QMessageBox.Yes:
+                delete_archive(project, archive.id)
+                save_workspace(self.workspace)
+                render()
+                self.refresh()
+
+        def open_path() -> None:
+            _project, archive = selected_archive_pair()
+            if not archive or not archive.path:
+                QMessageBox.information(page, "没有路径", "该档案没有填写文件或目录路径。")
+                return
+            path = Path(archive.path)
+            if path.exists():
+                subprocess.Popen(["explorer", str(path if path.is_dir() else path.parent)])
+            else:
+                QMessageBox.warning(page, "路径不存在", str(path))
+
+        search_input.textChanged.connect(lambda _text: render())
+        project_filter.currentIndexChanged.connect(lambda _index: render())
+        type_filter.currentIndexChanged.connect(lambda _index: render())
+        status_filter.currentIndexChanged.connect(lambda _index: render())
+        table.itemDoubleClicked.connect(lambda _item: edit_item())
+        actions = QHBoxLayout()
+        for label, handler, obj in [("新增档案", add_item, "primary"), ("编辑档案", edit_item, ""), ("删除档案", delete_item, "danger"), ("打开路径", open_path, "alt")]:
+            button = QPushButton(label)
+            if obj:
+                button.setObjectName(obj)
+            button.clicked.connect(handler)
+            actions.addWidget(button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        render()
+        return page
+
+    def _build_inbox_page(self) -> QWidget:
+        page, layout = self._page_shell(
+            "待归档任务收集箱",
+            "先收集暂时无法归入项目的待办、实验线索、资料和想法；后续可建议归档、转为任务或创建新项目。",
+        )
+        table = self._make_table(["日期", "标题", "说明", "来源", "状态", "建议动作", "建议项目", "建议原因"])
+        layout.addWidget(table, 1)
+        rendered: list[InboxTask] = []
+
+        def render() -> None:
+            rendered[:] = sorted(self.workspace.inboxTasks, key=lambda value: value.createdDate, reverse=True)
+            table.setRowCount(len(rendered))
+            for row, item in enumerate(rendered):
+                values = [item.createdDate, item.title, item.description, item.source, item.status, item.suggestedAction, self._project_name(item.suggestedProjectId), item.suggestionReason]
+                for col, value in enumerate(values):
+                    cell = QTableWidgetItem(str(value))
+                    cell.setToolTip(str(value))
+                    cell.setData(Qt.UserRole, item.id)
+                    table.setItem(row, col, cell)
+                table.setRowHeight(row, 42)
+            table.resizeColumnsToContents()
+            table.setColumnWidth(1, 220)
+            table.setColumnWidth(2, 280)
+            table.setColumnWidth(7, 280)
+
+        def selected_item() -> InboxTask | None:
+            row = table.currentRow()
+            if row < 0 or row >= len(rendered):
+                return None
+            return rendered[row]
+
+        def add_item() -> None:
+            dialog = InboxTaskDialog(parent=page)
+            if dialog.exec() == QDialog.Accepted:
+                item = add_inbox_task(self.workspace, dialog.values())
+                suggest_inbox_task(self.workspace, item)
+                save_workspace(self.workspace)
+                render()
+                self.refresh()
+
+        def edit_item() -> None:
+            item = selected_item()
+            if not item:
+                QMessageBox.information(page, "请选择待归档任务", "请先选中一条记录。")
+                return
+            dialog = InboxTaskDialog(item, page)
+            if dialog.exec() == QDialog.Accepted:
+                update_inbox_task(item, dialog.values())
+                suggest_inbox_task(self.workspace, item)
+                save_workspace(self.workspace)
+                render()
+                self.refresh()
+
+        def delete_item() -> None:
+            item = selected_item()
+            if not item:
+                QMessageBox.information(page, "请选择待归档任务", "请先选中一条记录。")
+                return
+            if QMessageBox.question(page, "确认删除", f"删除待归档任务“{item.title}”？") == QMessageBox.Yes:
+                delete_inbox_task(self.workspace, item.id)
+                save_workspace(self.workspace)
+                render()
+                self.refresh()
+
+        def suggest_all() -> None:
+            for item in self.workspace.inboxTasks:
+                if item.status in ("待处理", "待归档"):
+                    suggest_inbox_task(self.workspace, item)
+            save_workspace(self.workspace)
+            render()
+            self.refresh()
+
+        def accept_selected() -> None:
+            item = selected_item()
+            if not item:
+                QMessageBox.information(page, "请选择待归档任务", "请先选中一条记录。")
+                return
+            if not item.suggestedAction:
+                suggest_inbox_task(self.workspace, item)
+            result = accept_inbox_suggestion(self.workspace, item, self.current_project())
+            save_workspace(self.workspace)
+            render()
+            self.refresh()
+            if result is None:
+                QMessageBox.information(page, "需要人工判断", "该记录暂未形成明确建议，可手动转为任务、归档或新增项目。")
+
+        def to_task_current() -> None:
+            item = selected_item()
+            project = self.current_project()
+            if not item or not project:
+                return
+            task = add_task_to_project(project, today(), {"title": item.title or "待归档任务", "note": item.description, "risk": "M", "duration": 1, "status": "Open", "plannedProgress": 0, "actualProgress": 0})
+            item.status = "已转项目任务"
+            item.confirmed = True
+            item.suggestedProjectId = project.id
+            item.suggestedAction = "转为项目任务"
+            item.suggestionReason = f"已手动转为当前项目“{project.name}”任务。"
+            self.selected_task_id = task.id
+            save_workspace(self.workspace)
+            render()
+            self.refresh()
+
+        def new_project_from_item() -> None:
+            item = selected_item()
+            if not item:
+                return
+            project = add_project_to_workspace(self.workspace, {"name": item.title or "新项目", "summary": item.description, "nextStep": "请补充任务台账。"})
+            item.status = "已新建项目"
+            item.confirmed = True
+            item.suggestedProjectId = project.id
+            item.suggestedAction = "建议新建项目"
+            item.suggestionReason = "已手动创建新项目。"
+            save_workspace(self.workspace)
+            render()
+            self.refresh()
+            self._switch_to_task_plan(project.id)
+
+        table.itemDoubleClicked.connect(lambda _item: edit_item())
+        actions = QHBoxLayout()
+        for label, handler, obj in [
+            ("新增待归档任务", add_item, "primary"),
+            ("编辑", edit_item, ""),
+            ("删除", delete_item, "danger"),
+            ("刷新建议", suggest_all, ""),
+            ("采纳建议", accept_selected, "alt"),
+            ("转为当前项目任务", to_task_current, ""),
+            ("新增项目", new_project_from_item, ""),
+        ]:
+            button = QPushButton(label)
+            if obj:
+                button.setObjectName(obj)
+            button.clicked.connect(handler)
+            actions.addWidget(button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        render()
+        return page
+
+    def _build_daily_log_page(self) -> QWidget:
+        page, layout = self._page_shell("日报记录", "当前项目的日报流水，按日期倒序展示计划、实际、结果和延期原因。")
+        project = self.current_project()
+        table = self._make_table(["日期", "负责人", "任务", "计划完成", "实际完成", "计划", "实际", "结果", "延期原因"])
+        if project:
+            task_names = {task.id: task.title for task in project.tasks}
+            rows = []
+            ids = []
+            for log in sorted(project.dailyLogs, key=lambda item: item.date, reverse=True):
+                ids.append(log.id)
+                rows.append([log.date, log.responsible, task_names.get(log.taskId, ""), log.planText, log.actualText, f"{log.plannedProgress}%", f"{log.actualProgress}%", log.result, log.delayReason])
+            self._fill_table(table, rows, ids)
+        layout.addWidget(table, 1)
+
+        def select_current_log() -> None:
+            row = table.currentRow()
+            if row < 0 or not project:
+                return
+            item = table.item(row, 0)
+            log_id = item.data(Qt.UserRole) if item else None
+            log = next((entry for entry in project.dailyLogs if entry.id == log_id), None)
+            if log:
+                self.workspace.selectedDate = log.date
+                self.selected_task_id = log.taskId
+                save_workspace(self.workspace)
+                self.refresh()
+
+        table.itemSelectionChanged.connect(select_current_log)
+        table.itemDoubleClicked.connect(lambda _item: self.edit_daily())
+        actions = QHBoxLayout()
+        for label, handler, obj in [("新增日报", self.add_daily, "primary"), ("编辑日报", self.edit_daily, ""), ("删除日报", self.delete_daily, "danger")]:
+            button = QPushButton(label)
+            if obj:
+                button.setObjectName(obj)
+            button.clicked.connect(handler)
+            actions.addWidget(button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        return page
+
+    def _build_risk_board_page(self) -> QWidget:
+        page, layout = self._page_shell("风险看板", "聚合当前项目的高风险、逾期未关闭和进度落后任务。")
+        project = self.current_project()
+        table = self._make_table(["关注原因", "风险", "任务", "负责人", "状态", "结束", "进度", "备注"])
+        rows = []
+        ids = []
+        if project:
+            current = today()
+            for task in project.tasks:
+                entry = latest_entry(task)
+                reasons = []
+                if task.risk == "H" and task.status != "Closed":
+                    reasons.append("高风险")
+                if task.status != "Closed" and task_end_date(task) < current:
+                    reasons.append("逾期未关闭")
+                if entry.plannedProgress - entry.actualProgress >= 10 and task.status != "Closed":
+                    reasons.append("进度落后")
+                if reasons:
+                    ids.append(task.id)
+                    rows.append([" / ".join(reasons), task.risk, task.title, task.responsible, STATUS_LABELS.get(task.status, task.status), task_end_date(task), f"计划 {entry.plannedProgress}% / 实际 {entry.actualProgress}%", task.note])
+        if not rows:
+            rows = [["暂无异常", "", "", "", "", "", "", ""]]
+            ids = [""]
+        self._fill_table(table, rows, ids)
+        layout.addWidget(table, 1)
+
+        def edit_current() -> None:
+            row = table.currentRow()
+            if row < 0:
+                return
+            task_id = table.item(row, 0).data(Qt.UserRole)
+            if task_id:
+                self.selected_task_id = task_id
+                self.edit_task()
+
+        table.itemDoubleClicked.connect(lambda _item: edit_current())
+        actions = QHBoxLayout()
+        button = QPushButton("编辑选中任务")
+        button.clicked.connect(edit_current)
+        actions.addWidget(button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        return page
+
+    def _build_data_center_page(self) -> QWidget:
+        page, layout = self._page_shell("数据中心", "导入/导出本地 JSON、CSV、Excel，或打开本地数据目录。")
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        items = [
+            ("导入网页版 JSON", "兼容网页版 workspace、单项目 JSON 和旧版导出。", self.import_json, "primary"),
+            ("导出完整 JSON", "适合备份和跨设备迁移。", self.export_json, ""),
+            ("导出当前项目 CSV", "导出当前项目任务台账。", self.export_csv, ""),
+            ("导出当前项目 Excel", "生成包含概览、任务、日报和甘特日期表的 Excel。", self.export_excel, "alt"),
+            ("打开数据目录", "查看 workspace.json 和自动备份。", self.open_data_dir, ""),
+        ]
+        for index, (title, desc, handler, obj) in enumerate(items):
+            card = QFrame()
+            card.setObjectName("card")
+            self._add_shadow(card)
+            box = QVBoxLayout(card)
+            box.setContentsMargins(16, 14, 16, 14)
+            head = QLabel(title)
+            head.setStyleSheet("font-size:15px;font-weight:900;color:#1f2933;")
+            note = QLabel(desc)
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#6b7682;")
+            button = QPushButton(title)
+            if obj:
+                button.setObjectName(obj)
+            button.clicked.connect(handler)
+            box.addWidget(head)
+            box.addWidget(note, 1)
+            box.addWidget(button)
+            grid.addWidget(card, index // 3, index % 3)
+        layout.addLayout(grid)
+        layout.addStretch()
+        return page
 
     def _show_table_dialog(self, title: str, headers: list[str], rows: list[list[str]], width: int = 1100, height: int = 620) -> None:
         dialog = QDialog(self)
@@ -2160,6 +3122,12 @@ class MainWindow(QMainWindow):
         self.selected_date_label.setText(f"当前日期：{self.workspace.selectedDate} · 点击甘特图日期后自动切换")
         self._render_logs(project)
         self._render_detail(project)
+        if not getattr(self, "_rebuilding_active_page", False):
+            self._rebuilding_active_page = True
+            try:
+                self._rebuild_active_page()
+            finally:
+                self._rebuilding_active_page = False
 
     def _deadline_note(self, deadline: str) -> str:
         try:
@@ -2505,7 +3473,7 @@ class MainWindow(QMainWindow):
 def main() -> int:
     app = QApplication(sys.argv)
     app.setFont(QFont("Microsoft YaHei UI", 10))
-    app.setStyleSheet(QSS)
+    app.setStyleSheet(app_stylesheet())
     window = MainWindow()
     window.show()
     return app.exec()
