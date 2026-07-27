@@ -1,4 +1,11 @@
-# Project_Manage_LocalV3.1
+# Project_Manage_LocalV3.2
+
+## V3.2 更新重点
+
+- **待归档任务目标项目明确化**：手动转任务前需要先选择目标项目，按钮会显示“转为某项目任务”，避免“当前项目”含义不清。
+- **任务表格升级为任务台账**：默认跨项目查看全部任务，增加项目、状态、风险和关键词筛选。
+- **日报记录升级为全项目流水**：默认显示全部项目日报，可按项目、结果和关键词筛选；编辑/删除时自动定位到日报所属项目。
+- **数据版本标记更新**：保存的 workspace 版本标记改为 `Project_Manage_LocalV3.2`。
 
 ## V3 更新重点
 
@@ -68,7 +75,7 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.1/Project_Manage_LocalV3.1.exe
+local_desktop/dist/Project_Manage_LocalV3.2/Project_Manage_LocalV3.2.exe
 ```
 
 ## 与网页版差异

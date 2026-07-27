@@ -9,8 +9,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from openpyxl import load_workbook
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCalendarWidget, QDateEdit, QStackedWidget
+from PySide6.QtWidgets import QApplication, QCalendarWidget, QComboBox, QDateEdit, QPushButton, QStackedWidget, QTableWidget
 
+import src.app as app_module
 from src.app import ArchiveDialog, DailyDialog, InboxTaskDialog, MainWindow, ProjectDialog, TaskDialog
 from src.import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json, normalize_workspace
 from src.metrics import normalize_date, task_end_date
@@ -21,6 +22,52 @@ from src.storage import load_workspace, save_workspace, workspace_path
 
 def app():
     return QApplication.instance() or QApplication([])
+
+
+def make_cross_project_workspace():
+    task_a = Task(id="t-a", title="Alpha task", responsible="Owner A", startDate="2026-06-01", duration=2)
+    task_b = Task(id="t-b", title="Beta task", responsible="Owner B", startDate="2026-06-03", duration=3, risk="H")
+    project_a = Project(
+        id="p-a",
+        name="Alpha project",
+        deadline="2026-06-30",
+        tasks=[task_a],
+        dailyLogs=[DailyLog(id="l-a", taskId="t-a", date="2026-06-02", responsible="Owner A", planText="Plan A", actualText="Actual A")],
+    )
+    project_b = Project(
+        id="p-b",
+        name="Beta project",
+        deadline="2026-07-15",
+        tasks=[task_b],
+        dailyLogs=[
+            DailyLog(
+                id="l-b",
+                taskId="t-b",
+                date="2026-06-04",
+                responsible="Owner B",
+                planText="Plan B",
+                actualText="Actual B",
+                result="延期",
+                delayReason="Blocked",
+            )
+        ],
+    )
+    return Workspace(selectedProjectId="p-b", selectedDate="2026-06-04", projects=[project_a, project_b])
+
+
+def window_for_workspace(monkeypatch, workspace):
+    app()
+    monkeypatch.setattr(app_module, "load_workspace", lambda: workspace)
+    monkeypatch.setattr(app_module, "save_workspace", lambda _workspace: None)
+    return MainWindow()
+
+
+def table_with_headers(page, headers):
+    for table in page.findChildren(QTableWidget):
+        current = [table.horizontalHeaderItem(index).text() for index in range(min(table.columnCount(), len(headers)))]
+        if current == headers:
+            return table
+    raise AssertionError(f"table with headers {headers} not found")
 
 
 def test_daily_overview_date_range_includes_start_date():
@@ -147,6 +194,10 @@ def test_storage_writes_current_app_version(tmp_path, monkeypatch):
     assert load_workspace().version == APP_VERSION
 
 
+def test_app_version_is_v3_2():
+    assert APP_VERSION == "Project_Manage_LocalV3.2"
+
+
 def test_json_csv_excel_export_round_trip(tmp_path):
     task = Task(
         id="t1",
@@ -232,3 +283,35 @@ def test_sidebar_navigation_uses_embedded_pages():
 
     window.navigate_to("任务计划")
     assert window.page_stack.currentWidget() is window.page_widgets["任务计划"]
+
+
+def test_task_ledger_defaults_to_all_projects(monkeypatch):
+    window = window_for_workspace(monkeypatch, make_cross_project_workspace())
+
+    window.navigate_to("任务表格")
+    table = table_with_headers(window.page_stack.currentWidget(), ["项目", "风险", "任务"])
+
+    assert table.rowCount() == 2
+    assert {table.item(row, 0).text() for row in range(table.rowCount())} == {"Alpha project", "Beta project"}
+
+
+def test_daily_log_page_defaults_to_all_projects(monkeypatch):
+    window = window_for_workspace(monkeypatch, make_cross_project_workspace())
+
+    window.navigate_to("日报记录")
+    table = table_with_headers(window.page_stack.currentWidget(), ["项目", "日期", "负责人"])
+
+    assert table.rowCount() == 2
+    assert {table.item(row, 0).text() for row in range(table.rowCount())} == {"Alpha project", "Beta project"}
+
+
+def test_inbox_conversion_target_project_is_explicit(monkeypatch):
+    window = window_for_workspace(monkeypatch, make_cross_project_workspace())
+
+    window.navigate_to("待归档任务")
+    page = window.page_stack.currentWidget()
+    combo_texts = [[combo.itemText(index) for index in range(combo.count())] for combo in page.findChildren(QComboBox)]
+    button_texts = [button.text() for button in page.findChildren(QPushButton)]
+
+    assert any("Beta project" in texts for texts in combo_texts)
+    assert "转为“Beta project”任务" in button_texts

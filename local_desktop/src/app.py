@@ -1037,8 +1037,9 @@ class MainWindow(QMainWindow):
         QApplication.instance().setFont(QFont("Microsoft YaHei UI", 10))
         self.workspace: Workspace = load_workspace()
         self.selected_task_id: str | None = None
+        self.selected_log_id: str | None = None
         self.active_page_name = "任务计划"
-        self.setWindowTitle("Project_Manage_LocalV3.1")
+        self.setWindowTitle("Project_Manage_LocalV3.2")
         self.resize(1680, 980)
         self.setMinimumSize(1280, 760)
         self._build_ui()
@@ -1143,7 +1144,7 @@ class MainWindow(QMainWindow):
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(22, 14, 22, 14)
         title_box = QVBoxLayout()
-        eyebrow = QLabel("Project_Manage_LocalV3.1")
+        eyebrow = QLabel("Project_Manage_LocalV3.2")
         eyebrow.setStyleSheet("color:#2563eb;font-weight:900;font-size:12px;")
         self.title = QLabel()
         self.title.setStyleSheet("font-size:26px;font-weight:900;")
@@ -1811,34 +1812,145 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_task_table_page(self) -> QWidget:
-        page, layout = self._page_shell("任务表格", "当前项目的任务台账表格视图，适合快速扫描负责人、周期、状态、进度和备注。")
-        project = self.current_project()
-        table = self._make_table(["风险", "任务", "负责人", "开始", "工期", "结束", "状态", "计划", "实际", "完成日", "备注"])
-        if project:
-            rows = []
-            ids = []
-            for task, depth in ordered_tasks(project.tasks):
-                entry = latest_entry(task)
-                ids.append(task.id)
-                rows.append([task.risk, "  " * depth + task.title, task.responsible, task.startDate, str(task.duration), task_end_date(task), STATUS_LABELS.get(task.status, task.status), f"{entry.plannedProgress}%", f"{entry.actualProgress}%", task.completedDate, task.note])
-            self._fill_table(table, rows, ids)
-        layout.addWidget(table, 1)
+        page, layout = self._page_shell(
+            "任务台账",
+            "跨项目查看全部任务，适合按项目、负责人、状态、风险快速筛选；双击任务可直接编辑对应项目里的原始任务。",
+        )
+        filter_row = QHBoxLayout()
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("搜索任务 / 负责人 / 备注 / 项目")
+        search_input.setClearButtonEnabled(True)
+        project_filter = QComboBox()
+        project_filter.addItem("全部项目", "")
+        status_filter = QComboBox()
+        status_filter.addItem("全部状态", "")
+        for status, label in STATUS_LABELS.items():
+            status_filter.addItem(label, status)
+        risk_filter = QComboBox()
+        risk_filter.addItem("全部风险", "")
+        for risk in ["H", "M", "L"]:
+            risk_filter.addItem(risk, risk)
+        result_label = QLabel()
+        result_label.setStyleSheet("color:#6b7682;font-weight:900;")
+        for project in self.workspace.projects:
+            project_filter.addItem(project.name, project.id)
+        filter_row.addWidget(search_input, 1)
+        filter_row.addWidget(project_filter)
+        filter_row.addWidget(status_filter)
+        filter_row.addWidget(risk_filter)
+        filter_row.addWidget(result_label)
+        layout.addLayout(filter_row)
 
-        def select_current_task() -> None:
+        table = self._make_table(["项目", "风险", "任务", "负责人", "开始", "工期", "结束", "状态", "计划", "实际", "完成日", "备注"])
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(11, QHeaderView.Stretch)
+        layout.addWidget(table, 1)
+        rendered: list[tuple[Project, Task]] = []
+
+        def render() -> None:
+            keyword = search_input.text().strip().lower()
+            selected_project_id = project_filter.currentData()
+            selected_status = status_filter.currentData()
+            selected_risk = risk_filter.currentData()
+            rendered.clear()
+            total = 0
+            for project in self.workspace.projects:
+                if selected_project_id and project.id != selected_project_id:
+                    continue
+                for task, depth in ordered_tasks(project.tasks):
+                    total += 1
+                    if selected_status and task.status != selected_status:
+                        continue
+                    if selected_risk and task.risk != selected_risk:
+                        continue
+                    if keyword:
+                        haystack = " ".join([project.name, task.risk, task.title, task.responsible, task.status, task.note]).lower()
+                        if keyword not in haystack:
+                            continue
+                    rendered.append((project, task))
+            table.setRowCount(len(rendered))
+            result_label.setText(f"{len(rendered)} / {total} 项")
+            for row, (project, task) in enumerate(rendered):
+                entry = latest_entry(task)
+                depth = 0
+                cursor = task
+                while cursor.parentId:
+                    parent = next((item for item in project.tasks if item.id == cursor.parentId), None)
+                    if not parent:
+                        break
+                    depth += 1
+                    cursor = parent
+                values = [
+                    project.name,
+                    task.risk,
+                    "  " * depth + task.title,
+                    task.responsible,
+                    task.startDate,
+                    str(task.duration),
+                    task_end_date(task),
+                    STATUS_LABELS.get(task.status, task.status),
+                    f"{entry.plannedProgress}%",
+                    f"{entry.actualProgress}%",
+                    task.completedDate,
+                    task.note,
+                ]
+                for col, value in enumerate(values):
+                    cell = QTableWidgetItem(str(value))
+                    cell.setToolTip(str(value))
+                    cell.setData(Qt.UserRole, task.id)
+                    cell.setData(Qt.UserRole + 1, project.id)
+                    table.setItem(row, col, cell)
+                table.setRowHeight(row, 42)
+            table.resizeColumnsToContents()
+            table.setColumnWidth(0, 180)
+            table.setColumnWidth(1, 70)
+            table.setColumnWidth(2, 320)
+            table.setColumnWidth(3, 120)
+            table.setColumnWidth(7, 90)
+            table.setColumnWidth(8, 80)
+            table.setColumnWidth(9, 80)
+            table.setColumnWidth(11, 320)
+
+        def selected_pair() -> tuple[Project | None, Task | None]:
             row = table.currentRow()
-            if row < 0:
-                return
-            item = table.item(row, 0)
-            self.selected_task_id = item.data(Qt.UserRole) if item else None
+            if row < 0 or row >= len(rendered):
+                return None, None
+            return rendered[row]
+
+        def sync_selection() -> tuple[Project | None, Task | None]:
+            project, task = selected_pair()
+            if project and task:
+                self.workspace.selectedProjectId = project.id
+                self.selected_task_id = task.id
+            return project, task
 
         def edit_current() -> None:
-            select_current_task()
+            project, task = sync_selection()
+            if not project or not task:
+                QMessageBox.information(page, "请选择任务", "请先选中一条任务。")
+                return
             self.edit_task()
 
-        table.itemSelectionChanged.connect(select_current_task)
+        def delete_current() -> None:
+            project, task = sync_selection()
+            if not project or not task:
+                QMessageBox.information(page, "请选择任务", "请先选中一条任务。")
+                return
+            self.delete_task()
+
+        def enter_plan() -> None:
+            project, task = sync_selection()
+            if project and task:
+                self._switch_to_task_plan(project.id, task.id)
+
+        search_input.textChanged.connect(lambda _text: render())
+        project_filter.currentIndexChanged.connect(lambda _index: render())
+        status_filter.currentIndexChanged.connect(lambda _index: render())
+        risk_filter.currentIndexChanged.connect(lambda _index: render())
+        table.itemSelectionChanged.connect(lambda: sync_selection())
         table.itemDoubleClicked.connect(lambda _item: edit_current())
         actions = QHBoxLayout()
-        for label, handler, obj in [("新增任务", self.add_task, "primary"), ("编辑任务", edit_current, ""), ("删除任务", self.delete_task, "danger")]:
+        for label, handler, obj in [("新增当前项目任务", self.add_task, "primary"), ("编辑任务", edit_current, ""), ("删除任务", delete_current, "danger"), ("进入任务计划", enter_plan, "alt")]:
             button = QPushButton(label)
             if obj:
                 button.setObjectName(obj)
@@ -1846,6 +1958,7 @@ class MainWindow(QMainWindow):
             actions.addWidget(button)
         actions.addStretch()
         layout.addLayout(actions)
+        render()
         return page
 
     def _build_archive_page(self) -> QWidget:
@@ -1991,11 +2104,37 @@ class MainWindow(QMainWindow):
     def _build_inbox_page(self) -> QWidget:
         page, layout = self._page_shell(
             "待归档任务收集箱",
-            "先收集暂时无法归入项目的待办、实验线索、资料和想法；后续可建议归档、转为任务或创建新项目。",
+            "先收集暂时无法归入项目的待办、实验线索、资料和想法；转为任务时必须明确目标项目，避免“当前项目”含义不清。",
         )
+        target_row = QHBoxLayout()
+        target_project = QComboBox()
+        target_project.setMinimumWidth(240)
+        for project in self.workspace.projects:
+            target_project.addItem(project.name, project.id)
+            if project.id == self.workspace.selectedProjectId:
+                target_project.setCurrentIndex(target_project.count() - 1)
+        target_hint = QLabel("")
+        target_hint.setStyleSheet("color:#6b7682;font-weight:900;")
+        target_row.addWidget(QLabel("转任务目标项目"))
+        target_row.addWidget(target_project)
+        target_row.addWidget(target_hint, 1)
+        layout.addLayout(target_row)
         table = self._make_table(["日期", "标题", "说明", "来源", "状态", "建议动作", "建议项目", "建议原因"])
         layout.addWidget(table, 1)
         rendered: list[InboxTask] = []
+        to_task_button: QPushButton | None = None
+
+        def selected_target_project() -> Project | None:
+            project_id = target_project.currentData()
+            return next((project for project in self.workspace.projects if project.id == project_id), None)
+
+        def update_target_text() -> None:
+            nonlocal to_task_button
+            project = selected_target_project()
+            name = project.name if project else "未选择项目"
+            target_hint.setText(f"将手动转入：{name}")
+            if to_task_button:
+                to_task_button.setText(f"转为“{name}”任务")
 
         def render() -> None:
             rendered[:] = sorted(self.workspace.inboxTasks, key=lambda value: value.createdDate, reverse=True)
@@ -2067,24 +2206,26 @@ class MainWindow(QMainWindow):
                 return
             if not item.suggestedAction:
                 suggest_inbox_task(self.workspace, item)
-            result = accept_inbox_suggestion(self.workspace, item, self.current_project())
+            result = accept_inbox_suggestion(self.workspace, item, selected_target_project() or self.current_project())
             save_workspace(self.workspace)
             render()
             self.refresh()
             if result is None:
                 QMessageBox.information(page, "需要人工判断", "该记录暂未形成明确建议，可手动转为任务、归档或新增项目。")
 
-        def to_task_current() -> None:
+        def to_task_selected_project() -> None:
             item = selected_item()
-            project = self.current_project()
+            project = selected_target_project()
             if not item or not project:
+                QMessageBox.information(page, "请选择目标项目", "请先选择要转入的项目。")
                 return
             task = add_task_to_project(project, today(), {"title": item.title or "待归档任务", "note": item.description, "risk": "M", "duration": 1, "status": "Open", "plannedProgress": 0, "actualProgress": 0})
             item.status = "已转项目任务"
             item.confirmed = True
             item.suggestedProjectId = project.id
             item.suggestedAction = "转为项目任务"
-            item.suggestionReason = f"已手动转为当前项目“{project.name}”任务。"
+            item.suggestionReason = f"已手动转为“{project.name}”任务。"
+            self.workspace.selectedProjectId = project.id
             self.selected_task_id = task.id
             save_workspace(self.workspace)
             render()
@@ -2106,6 +2247,7 @@ class MainWindow(QMainWindow):
             self._switch_to_task_plan(project.id)
 
         table.itemDoubleClicked.connect(lambda _item: edit_item())
+        target_project.currentIndexChanged.connect(lambda _index: update_target_text())
         actions = QHBoxLayout()
         for label, handler, obj in [
             ("新增待归档任务", add_item, "primary"),
@@ -2113,9 +2255,126 @@ class MainWindow(QMainWindow):
             ("删除", delete_item, "danger"),
             ("刷新建议", suggest_all, ""),
             ("采纳建议", accept_selected, "alt"),
-            ("转为当前项目任务", to_task_current, ""),
+            ("转为目标项目任务", to_task_selected_project, ""),
             ("新增项目", new_project_from_item, ""),
         ]:
+            button = QPushButton(label)
+            if label == "转为目标项目任务":
+                to_task_button = button
+            if obj:
+                button.setObjectName(obj)
+            button.clicked.connect(handler)
+            actions.addWidget(button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        render()
+        update_target_text()
+        return page
+
+    def _build_daily_log_page(self) -> QWidget:
+        page, layout = self._page_shell("日报记录", "跨项目日报流水，默认查看全部项目；编辑或删除时会自动切换到该日报所属项目。")
+        filter_row = QHBoxLayout()
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("搜索项目 / 负责人 / 任务 / 计划 / 实际 / 延期原因")
+        search_input.setClearButtonEnabled(True)
+        project_filter = QComboBox()
+        project_filter.addItem("全部项目", "")
+        result_filter = QComboBox()
+        result_filter.addItems(["全部结果", "完成", "部分完成", "延期"])
+        result_label = QLabel()
+        result_label.setStyleSheet("color:#6b7682;font-weight:900;")
+        for project in self.workspace.projects:
+            project_filter.addItem(project.name, project.id)
+        filter_row.addWidget(search_input, 1)
+        filter_row.addWidget(project_filter)
+        filter_row.addWidget(result_filter)
+        filter_row.addWidget(result_label)
+        layout.addLayout(filter_row)
+
+        table = self._make_table(["项目", "日期", "负责人", "任务", "计划完成", "实际完成", "计划", "实际", "结果", "延期原因"])
+        layout.addWidget(table, 1)
+        rendered: list[tuple[Project, DailyLog]] = []
+
+        def task_name(project: Project, log: DailyLog) -> str:
+            return next((task.title for task in project.tasks if task.id == log.taskId), "")
+
+        def render() -> None:
+            keyword = search_input.text().strip().lower()
+            selected_project_id = project_filter.currentData()
+            selected_result = result_filter.currentText()
+            rendered.clear()
+            total = 0
+            for project in self.workspace.projects:
+                if selected_project_id and project.id != selected_project_id:
+                    continue
+                for log in project.dailyLogs:
+                    total += 1
+                    name = task_name(project, log)
+                    if selected_result != "全部结果" and log.result != selected_result:
+                        continue
+                    if keyword:
+                        haystack = " ".join([project.name, log.date, log.responsible, name, log.planText, log.actualText, log.result, log.delayReason]).lower()
+                        if keyword not in haystack:
+                            continue
+                    rendered.append((project, log))
+            rendered.sort(key=lambda item: (item[1].date, item[0].name), reverse=True)
+            table.setRowCount(len(rendered))
+            result_label.setText(f"{len(rendered)} / {total} 条")
+            for row, (project, log) in enumerate(rendered):
+                values = [project.name, log.date, log.responsible, task_name(project, log), log.planText, log.actualText, f"{log.plannedProgress}%", f"{log.actualProgress}%", log.result, log.delayReason]
+                for col, value in enumerate(values):
+                    cell = QTableWidgetItem(str(value))
+                    cell.setToolTip(str(value))
+                    cell.setData(Qt.UserRole, log.id)
+                    cell.setData(Qt.UserRole + 1, project.id)
+                    if log.result == "延期":
+                        cell.setBackground(QColor("#fee2e2"))
+                    table.setItem(row, col, cell)
+                table.setRowHeight(row, 42)
+            table.resizeColumnsToContents()
+            table.setColumnWidth(0, 180)
+            table.setColumnWidth(3, 260)
+            table.setColumnWidth(4, 260)
+            table.setColumnWidth(5, 260)
+            table.setColumnWidth(9, 260)
+
+        def selected_log_pair() -> tuple[Project | None, DailyLog | None]:
+            row = table.currentRow()
+            if row < 0 or row >= len(rendered):
+                return None, None
+            return rendered[row]
+
+        def select_current_log() -> None:
+            project, log = selected_log_pair()
+            if project and log:
+                self.workspace.selectedProjectId = project.id
+                self.workspace.selectedDate = log.date
+                self.selected_task_id = log.taskId
+                self.selected_log_id = log.id
+
+        def edit_current() -> None:
+            project, log = selected_log_pair()
+            if not project or not log:
+                QMessageBox.information(page, "请选择日报", "请先选中一条日报记录。")
+                return
+            select_current_log()
+            self.edit_daily()
+
+        def delete_current() -> None:
+            project, log = selected_log_pair()
+            if not project or not log:
+                QMessageBox.information(page, "请选择日报", "请先选中一条日报记录。")
+                return
+            select_current_log()
+            self.delete_daily()
+
+        search_input.textChanged.connect(lambda _text: render())
+        project_filter.currentIndexChanged.connect(lambda _index: render())
+        result_filter.currentIndexChanged.connect(lambda _index: render())
+        table.itemSelectionChanged.connect(select_current_log)
+        table.itemDoubleClicked.connect(lambda _item: edit_current())
+        actions = QHBoxLayout()
+        for label, handler, obj in [("新增当前项目日报", self.add_daily, "primary"), ("编辑日报", edit_current, ""), ("删除日报", delete_current, "danger")]:
             button = QPushButton(label)
             if obj:
                 button.setObjectName(obj)
@@ -2124,46 +2383,6 @@ class MainWindow(QMainWindow):
         actions.addStretch()
         layout.addLayout(actions)
         render()
-        return page
-
-    def _build_daily_log_page(self) -> QWidget:
-        page, layout = self._page_shell("日报记录", "当前项目的日报流水，按日期倒序展示计划、实际、结果和延期原因。")
-        project = self.current_project()
-        table = self._make_table(["日期", "负责人", "任务", "计划完成", "实际完成", "计划", "实际", "结果", "延期原因"])
-        if project:
-            task_names = {task.id: task.title for task in project.tasks}
-            rows = []
-            ids = []
-            for log in sorted(project.dailyLogs, key=lambda item: item.date, reverse=True):
-                ids.append(log.id)
-                rows.append([log.date, log.responsible, task_names.get(log.taskId, ""), log.planText, log.actualText, f"{log.plannedProgress}%", f"{log.actualProgress}%", log.result, log.delayReason])
-            self._fill_table(table, rows, ids)
-        layout.addWidget(table, 1)
-
-        def select_current_log() -> None:
-            row = table.currentRow()
-            if row < 0 or not project:
-                return
-            item = table.item(row, 0)
-            log_id = item.data(Qt.UserRole) if item else None
-            log = next((entry for entry in project.dailyLogs if entry.id == log_id), None)
-            if log:
-                self.workspace.selectedDate = log.date
-                self.selected_task_id = log.taskId
-                save_workspace(self.workspace)
-                self.refresh()
-
-        table.itemSelectionChanged.connect(select_current_log)
-        table.itemDoubleClicked.connect(lambda _item: self.edit_daily())
-        actions = QHBoxLayout()
-        for label, handler, obj in [("新增日报", self.add_daily, "primary"), ("编辑日报", self.edit_daily, ""), ("删除日报", self.delete_daily, "danger")]:
-            button = QPushButton(label)
-            if obj:
-                button.setObjectName(obj)
-            button.clicked.connect(handler)
-            actions.addWidget(button)
-        actions.addStretch()
-        layout.addLayout(actions)
         return page
 
     def _build_risk_board_page(self) -> QWidget:
@@ -3247,6 +3466,10 @@ class MainWindow(QMainWindow):
 
     def selected_log(self) -> DailyLog | None:
         project = self.current_project()
+        if project and self.selected_log_id:
+            selected = next((log for log in project.dailyLogs if log.id == self.selected_log_id), None)
+            if selected:
+                return selected
         row = self.log_table.currentRow()
         if not project or row < 0:
             return None
@@ -3365,6 +3588,7 @@ class MainWindow(QMainWindow):
         if ok != QMessageBox.Yes:
             return
         delete_log_from_project(project, log.id)
+        self.selected_log_id = None
         self.persist()
 
     def _save_log_values(self, log: DailyLog | None, values: dict) -> None:
@@ -3374,6 +3598,7 @@ class MainWindow(QMainWindow):
         try:
             saved = save_daily_log(self.workspace, project, log, values)
             self.selected_task_id = saved.taskId
+            self.selected_log_id = saved.id
         except ValueError as exc:
             QMessageBox.warning(self, "保存失败", str(exc))
             return
