@@ -234,6 +234,30 @@ QCalendarWidget QAbstractItemView:disabled {
 """
 
 
+def task_is_completed(task: Task) -> bool:
+    return task.status == "Closed"
+
+
+def task_sort_key(task: Task) -> tuple:
+    risk_order = {"H": 0, "M": 1, "L": 2}
+    return (
+        task_is_completed(task),
+        normalize_ui_date(task.startDate) or task.startDate,
+        risk_order.get(task.risk, 9),
+        task.title,
+    )
+
+
+def project_is_completed(project: Project) -> bool:
+    if project.tasks and all(task_is_completed(task) for task in project.tasks):
+        return True
+    return project_progress(project)[1] >= 100
+
+
+def sorted_projects(projects: list[Project]) -> list[Project]:
+    return sorted(projects, key=lambda project: (project_is_completed(project), normalize_ui_date(project.deadline) or project.deadline, project.name))
+
+
 def ordered_tasks(tasks: list[Task]) -> list[tuple[Task, int]]:
     task_map = {task.id: {"task": task, "children": []} for task in tasks}
     roots: list[Task] = []
@@ -246,10 +270,10 @@ def ordered_tasks(tasks: list[Task]) -> list[tuple[Task, int]]:
 
     def walk(item: Task, depth: int) -> None:
         output.append((item, depth))
-        for child in sorted(task_map[item.id]["children"], key=lambda value: normalize_ui_date(value.startDate) or value.startDate):
+        for child in sorted(task_map[item.id]["children"], key=task_sort_key):
             walk(child, depth + 1)
 
-    for task in sorted(roots, key=lambda value: normalize_ui_date(value.startDate) or value.startDate):
+    for task in sorted(roots, key=task_sort_key):
         walk(task, 0)
     return output
 
@@ -762,7 +786,12 @@ class TaskPlanWidget(QAbstractScrollArea):
         self.on_task_selected = None
         self.on_task_edit = None
         self.on_date_selected = None
-        self.left_width = 520
+        self.min_left_width = 520
+        self.max_left_width = 640
+        self.min_timeline_width = 340
+        self.divider_width = 8
+        self.left_width = 540
+        self._dragging_divider = False
         self.header_height = 56
         self.row_height = 62
         self.day_width = 64
@@ -774,6 +803,9 @@ class TaskPlanWidget(QAbstractScrollArea):
 
     def sizeHint(self) -> QSize:
         return QSize(1280, 560)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(920, 360)
 
     def set_project(self, project: Project | None, selected_date: str, selected_task_id: str | None = None) -> None:
         self.project = project
@@ -795,6 +827,7 @@ class TaskPlanWidget(QAbstractScrollArea):
         return [add_days(start, index) for index in range(total)]
 
     def _update_scrollbars(self) -> None:
+        self._fit_left_width()
         time_width = len(self.dates) * self.day_width
         body_height = len(self.rows) * self.row_height
         visible_time = max(1, self.viewport().width() - self.left_width)
@@ -803,6 +836,22 @@ class TaskPlanWidget(QAbstractScrollArea):
         self.horizontalScrollBar().setPageStep(visible_time)
         self.verticalScrollBar().setRange(0, max(0, body_height - visible_body))
         self.verticalScrollBar().setPageStep(visible_body)
+
+    def _fit_left_width(self) -> None:
+        viewport_width = max(1, self.viewport().width())
+        if viewport_width >= self.min_left_width + self.min_timeline_width:
+            max_left = min(self.max_left_width, viewport_width - self.min_timeline_width)
+            self.left_width = max(self.min_left_width, min(self.left_width, max_left))
+        else:
+            self.left_width = max(360, min(self.left_width, viewport_width - 260))
+
+    def _set_left_width(self, width: int) -> None:
+        viewport_width = max(1, self.viewport().width())
+        lower = 360 if viewport_width < self.min_left_width + self.min_timeline_width else self.min_left_width
+        upper = min(self.max_left_width, max(lower, viewport_width - 260))
+        self.left_width = max(lower, min(width, upper))
+        self._update_scrollbars()
+        self.viewport().update()
 
     def resizeEvent(self, event) -> None:
         self._update_scrollbars()
@@ -836,8 +885,14 @@ class TaskPlanWidget(QAbstractScrollArea):
         font.setBold(True)
         painter.setFont(font)
         headers = [("风险", 14, 48), ("任务名称", 76, 218), ("负责人", 310, 74), ("状态", 400, 68), ("实际", 476, 40)]
+        painter.save()
+        painter.setClipRect(QRectF(0, 0, self.left_width, self.header_height))
         for label, x, w in headers:
             painter.drawText(QRectF(x, 0, w, self.header_height), Qt.AlignVCenter | Qt.AlignLeft, label)
+        painter.restore()
+
+        painter.save()
+        painter.setClipRect(QRectF(self.left_width, 0, max(0, rect.width() - self.left_width), self.header_height))
         for index, date_value in enumerate(self.dates):
             x = self.left_width + index * self.day_width - hx
             if x + self.day_width < self.left_width or x > rect.width():
@@ -850,8 +905,10 @@ class TaskPlanWidget(QAbstractScrollArea):
             painter.drawText(QRectF(x, 30, self.day_width, 20), Qt.AlignCenter, self._weekday_label(date_value))
             painter.setPen(QColor("#eef2f7"))
             painter.drawLine(int(x), 0, int(x), rect.height())
+        painter.restore()
         painter.setPen(QPen(QColor("#e2e8f0"), 2))
         painter.drawLine(self.left_width - 1, 0, self.left_width - 1, rect.height())
+        painter.fillRect(QRectF(self.left_width - self.divider_width / 2, 0, self.divider_width, rect.height()), QColor(226, 232, 240, 120))
         painter.setPen(QColor("#e6eaf0"))
         painter.drawLine(0, self.header_height - 1, rect.width(), self.header_height - 1)
 
@@ -865,7 +922,12 @@ class TaskPlanWidget(QAbstractScrollArea):
             painter.fillRect(QRectF(0, y, rect.width(), self.row_height), QColor("#eff6ff") if selected else QColor("#ffffff" if row % 2 == 0 else "#fcfcfd"))
             painter.setPen(QColor("#eef2f7"))
             painter.drawLine(0, int(y + self.row_height - 1), rect.width(), int(y + self.row_height - 1))
+            painter.save()
+            painter.setClipRect(QRectF(0, y, self.left_width, self.row_height))
             self._paint_left_task(painter, task, depth, y)
+            painter.restore()
+            painter.save()
+            painter.setClipRect(QRectF(self.left_width, y, max(0, rect.width() - self.left_width), self.row_height))
             for index, date_value in enumerate(self.dates):
                 x = self.left_width + index * self.day_width - hx
                 if x + self.day_width < self.left_width or x > rect.width():
@@ -873,6 +935,7 @@ class TaskPlanWidget(QAbstractScrollArea):
                 if date_value == self.selected_date:
                     painter.fillRect(QRectF(x, y, self.day_width, self.row_height), QColor(219, 234, 254, 110))
             self._paint_task_bar(painter, task, y, hx, today_value)
+            painter.restore()
 
     def _paint_left_task(self, painter: QPainter, task: Task, depth: int, y: float) -> None:
         entry = latest_entry(task)
@@ -934,7 +997,7 @@ class TaskPlanWidget(QAbstractScrollArea):
         if actual_w > 0:
             painter.setPen(Qt.NoPen)
             painter.setBrush(color)
-            painter.drawRoundedRect(QRectF(x, bar_y, max(24, actual_w), bar_h), 12, 12)
+            painter.drawRoundedRect(QRectF(x, bar_y, min(width, max(24, actual_w)), bar_h), 12, 12)
         if width >= 44:
             painter.setPen(QColor("#ffffff") if entry.actualProgress >= 18 else color)
             painter.drawText(QRectF(x, bar_y, width, bar_h), Qt.AlignCenter, f"{entry.actualProgress}%")
@@ -984,8 +1047,15 @@ class TaskPlanWidget(QAbstractScrollArea):
         index = int((point.x() - self.left_width + self.horizontalScrollBar().value()) / self.day_width)
         return self.dates[index] if 0 <= index < len(self.dates) else None
 
+    def _near_divider(self, point: QPoint) -> bool:
+        return abs(point.x() - self.left_width) <= self.divider_width
+
     def mousePressEvent(self, event) -> None:
         if event.button() != Qt.LeftButton:
+            return
+        if self._near_divider(event.pos()):
+            self._dragging_divider = True
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
             return
         if event.pos().x() >= self.left_width:
             date_value = self._hit_date(event.pos())
@@ -1003,12 +1073,28 @@ class TaskPlanWidget(QAbstractScrollArea):
                 self.on_task_selected(task.id)
         self.viewport().update()
 
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self._dragging_divider:
+            self._dragging_divider = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
     def mouseDoubleClickEvent(self, event) -> None:
         row = self._hit_row(event.pos())
         if row is not None and self.on_task_edit:
             self.on_task_edit(self.rows[row][0].id)
 
     def mouseMoveEvent(self, event) -> None:
+        if self._dragging_divider:
+            self._set_left_width(event.pos().x())
+            return
+        if self._near_divider(event.pos()):
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+            self.setToolTip("拖拽调整任务字段与甘特图宽度")
+            return
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         row = self._hit_row(event.pos())
         if row is None:
             self.setToolTip("")
@@ -1039,7 +1125,7 @@ class MainWindow(QMainWindow):
         self.selected_task_id: str | None = None
         self.selected_log_id: str | None = None
         self.active_page_name = "任务计划"
-        self.setWindowTitle("Project_Manage_LocalV3.2")
+        self.setWindowTitle("Project_Manage_LocalV3.3")
         self.resize(1680, 980)
         self.setMinimumSize(1280, 760)
         self._build_ui()
@@ -1049,7 +1135,8 @@ class MainWindow(QMainWindow):
         for project in self.workspace.projects:
             if project.id == self.workspace.selectedProjectId:
                 return project
-        return self.workspace.projects[0] if self.workspace.projects else None
+        projects = sorted_projects(self.workspace.projects)
+        return projects[0] if projects else None
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -1133,8 +1220,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_topbar())
         layout.addLayout(self._build_status_cards())
         layout.addLayout(self._build_briefs_and_focus())
-        layout.addWidget(self._build_plan_panel(), 5)
-        layout.addWidget(self._build_bottom_area(), 0)
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(self._build_plan_panel())
+        splitter.addWidget(self._build_bottom_area())
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([560, 190])
+        layout.addWidget(splitter, 1)
         return content
 
     def _build_topbar(self) -> QFrame:
@@ -1144,7 +1237,7 @@ class MainWindow(QMainWindow):
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(22, 14, 22, 14)
         title_box = QVBoxLayout()
-        eyebrow = QLabel("Project_Manage_LocalV3.2")
+        eyebrow = QLabel("Project_Manage_LocalV3.3")
         eyebrow.setStyleSheet("color:#2563eb;font-weight:900;font-size:12px;")
         self.title = QLabel()
         self.title.setStyleSheet("font-size:26px;font-weight:900;")
@@ -1773,7 +1866,7 @@ class MainWindow(QMainWindow):
         table = self._make_table(["项目", "Deadline", "剩余/逾期", "计划", "实际", "任务数", "已关闭", "逾期", "档案", "一句话总结"])
         rows = []
         ids = []
-        for project in self.workspace.projects:
+        for project in sorted_projects(self.workspace.projects):
             planned, actual = project_progress(project)
             closed = sum(1 for task in project.tasks if task.status == "Closed")
             try:
@@ -1832,7 +1925,7 @@ class MainWindow(QMainWindow):
             risk_filter.addItem(risk, risk)
         result_label = QLabel()
         result_label.setStyleSheet("color:#6b7682;font-weight:900;")
-        for project in self.workspace.projects:
+        for project in sorted_projects(self.workspace.projects):
             project_filter.addItem(project.name, project.id)
         filter_row.addWidget(search_input, 1)
         filter_row.addWidget(project_filter)
@@ -1854,7 +1947,7 @@ class MainWindow(QMainWindow):
             selected_risk = risk_filter.currentData()
             rendered.clear()
             total = 0
-            for project in self.workspace.projects:
+            for project in sorted_projects(self.workspace.projects):
                 if selected_project_id and project.id != selected_project_id:
                     continue
                 for task, depth in ordered_tasks(project.tasks):
@@ -2109,7 +2202,7 @@ class MainWindow(QMainWindow):
         target_row = QHBoxLayout()
         target_project = QComboBox()
         target_project.setMinimumWidth(240)
-        for project in self.workspace.projects:
+        for project in sorted_projects(self.workspace.projects):
             target_project.addItem(project.name, project.id)
             if project.id == self.workspace.selectedProjectId:
                 target_project.setCurrentIndex(target_project.count() - 1)
@@ -2283,7 +2376,7 @@ class MainWindow(QMainWindow):
         result_filter.addItems(["全部结果", "完成", "部分完成", "延期"])
         result_label = QLabel()
         result_label.setStyleSheet("color:#6b7682;font-weight:900;")
-        for project in self.workspace.projects:
+        for project in sorted_projects(self.workspace.projects):
             project_filter.addItem(project.name, project.id)
         filter_row.addWidget(search_input, 1)
         filter_row.addWidget(project_filter)
@@ -2304,7 +2397,7 @@ class MainWindow(QMainWindow):
             selected_result = result_filter.currentText()
             rendered.clear()
             total = 0
-            for project in self.workspace.projects:
+            for project in sorted_projects(self.workspace.projects):
                 if selected_project_id and project.id != selected_project_id:
                     continue
                 for log in project.dailyLogs:
@@ -2590,7 +2683,7 @@ class MainWindow(QMainWindow):
             self.workspace.selectedDate = selected_date
             rendered.clear()
             collected: list[tuple[int, Project, Task, DailyLog | None, str]] = []
-            for project in self.workspace.projects:
+            for project in sorted_projects(self.workspace.projects):
                 for task in project.tasks:
                     reasons, log, priority = classify(project, task, selected_date)
                     if reasons:
@@ -3309,7 +3402,7 @@ class MainWindow(QMainWindow):
     def refresh(self) -> None:
         self.project_select.blockSignals(True)
         self.project_select.clear()
-        for project in self.workspace.projects:
+        for project in sorted_projects(self.workspace.projects):
             self.project_select.addItem(project.name, project.id)
         index = max(0, self.project_select.findData(self.workspace.selectedProjectId))
         self.project_select.setCurrentIndex(index)

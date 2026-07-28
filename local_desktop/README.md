@@ -1,4 +1,11 @@
-# Project_Manage_LocalV3.2
+# Project_Manage_LocalV3.3
+
+## V3.3 更新重点
+
+- **任务计划布局修复**：任务字段区与甘特图区分区绘制并强制裁剪，任务条不会再画进左侧任务信息区。
+- **支持拖拽分栏**：甘特图左侧任务字段与右侧时间轴之间增加可拖拽分隔线，窗口变化时保留最小时间轴宽度。
+- **已完成项自动后置**：Closed 任务默认排在未完成任务后面；已完成项目默认排在项目选择和看板列表末尾。
+- **数据版本标记更新**：保存的 workspace 版本标记改为 `Project_Manage_LocalV3.3`。
 
 ## V3.2 更新重点
 
@@ -75,7 +82,26 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.2/Project_Manage_LocalV3.2.exe
+local_desktop/dist/Project_Manage_LocalV3.3/Project_Manage_LocalV3.3.exe
+```
+
+## 生成 Setup 安装程序
+
+```powershell
+cd local_desktop
+.\build_setup.ps1
+```
+
+输出：
+
+```text
+local_desktop/dist/Project_Manage_LocalV3.3_Setup.exe
+```
+
+安装程序会把主程序安装到：
+
+```text
+%LOCALAPPDATA%/Programs/Project_Manage_LocalV3.3
 ```
 
 ## 与网页版差异

@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCalendarWidget, QComboBox, QDateEdit, QPushButton, QStackedWidget, QTableWidget
 
 import src.app as app_module
-from src.app import ArchiveDialog, DailyDialog, InboxTaskDialog, MainWindow, ProjectDialog, TaskDialog
+from src.app import ArchiveDialog, DailyDialog, InboxTaskDialog, MainWindow, ProjectDialog, TaskDialog, ordered_tasks, sorted_projects
 from src.import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json, normalize_workspace
 from src.metrics import normalize_date, task_end_date
 from src.models import APP_VERSION, DailyLog, ProgressEntry, Project, Task, Workspace
@@ -194,8 +194,30 @@ def test_storage_writes_current_app_version(tmp_path, monkeypatch):
     assert load_workspace().version == APP_VERSION
 
 
-def test_app_version_is_v3_2():
-    assert APP_VERSION == "Project_Manage_LocalV3.2"
+def test_app_version_is_v3_3():
+    assert APP_VERSION == "Project_Manage_LocalV3.3"
+
+
+def test_completed_tasks_are_sorted_after_open_tasks():
+    done = Task(id="done", title="Done", startDate="2026-06-01", status="Closed")
+    open_task = Task(id="open", title="Open", startDate="2026-06-09", status="Open")
+
+    ordered = ordered_tasks([done, open_task])
+
+    assert [task.id for task, _depth in ordered] == ["open", "done"]
+
+
+def test_completed_projects_are_sorted_after_active_projects(monkeypatch):
+    active = Project(id="active", name="Active", deadline="2026-07-30", tasks=[Task(status="Open")])
+    done = Project(id="done", name="Done", deadline="2026-06-01", tasks=[Task(status="Closed")])
+    workspace = Workspace(selectedProjectId="active", projects=[done, active])
+
+    assert [project.id for project in sorted_projects(workspace.projects)] == ["active", "done"]
+
+    window = window_for_workspace(monkeypatch, workspace)
+    combo_values = [window.project_select.itemData(index) for index in range(window.project_select.count())]
+
+    assert combo_values == ["active", "done"]
 
 
 def test_json_csv_excel_export_round_trip(tmp_path):
