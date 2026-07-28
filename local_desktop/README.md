@@ -1,4 +1,11 @@
-# Project_Manage_LocalV3.3
+# Project_Manage_LocalV3.4
+
+## V3.4 更新重点
+
+- **统一现代弹窗**：新增/编辑项目、任务、日报、档案和待归档任务弹窗改为统一白色卡片布局。
+- **统一消息提示**：常用信息、警告、确认删除、导入方式选择改为项目内统一样式。
+- **程序图标**：新增深蓝项目罗盘图标，并用于窗口、任务栏、exe 和 Setup 安装快捷方式。
+- **数据版本标记更新**：保存的 workspace 版本标记改为 `Project_Manage_LocalV3.4`。
 
 ## V3.3 更新重点
 
@@ -82,7 +89,7 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.3/Project_Manage_LocalV3.3.exe
+local_desktop/dist/Project_Manage_LocalV3.4/Project_Manage_LocalV3.4.exe
 ```
 
 ## 生成 Setup 安装程序
@@ -95,13 +102,13 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.3_Setup.exe
+local_desktop/dist/Project_Manage_LocalV3.4_Setup.exe
 ```
 
 安装程序会把主程序安装到：
 
 ```text
-%LOCALAPPDATA%/Programs/Project_Manage_LocalV3.3
+%LOCALAPPDATA%/Programs/Project_Manage_LocalV3.4
 ```
 
 ## 与网页版差异

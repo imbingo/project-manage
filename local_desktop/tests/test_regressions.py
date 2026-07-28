@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCalendarWidget, QComboBox, QDateEdit, QPushButton, QStackedWidget, QTableWidget
 
 import src.app as app_module
-from src.app import ArchiveDialog, DailyDialog, InboxTaskDialog, MainWindow, ProjectDialog, TaskDialog, ordered_tasks, sorted_projects
+from src.app import AppDialog, ArchiveDialog, DailyDialog, InboxTaskDialog, MainWindow, ProjectDialog, TaskDialog, app_icon, ordered_tasks, sorted_projects
 from src.import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json, normalize_workspace
 from src.metrics import normalize_date, task_end_date
 from src.models import APP_VERSION, DailyLog, ProgressEntry, Project, Task, Workspace
@@ -194,8 +194,16 @@ def test_storage_writes_current_app_version(tmp_path, monkeypatch):
     assert load_workspace().version == APP_VERSION
 
 
-def test_app_version_is_v3_3():
-    assert APP_VERSION == "Project_Manage_LocalV3.3"
+def test_app_version_is_v3_4():
+    assert APP_VERSION == "Project_Manage_LocalV3.4"
+
+
+def test_application_icon_is_available():
+    app()
+
+    icon = app_icon()
+
+    assert not icon.isNull()
 
 
 def test_completed_tasks_are_sorted_after_open_tasks():
@@ -291,6 +299,43 @@ def test_core_date_fields_use_calendar_widgets():
     assert project_dialog.values()["deadline"] == "2026-06-30"
     assert task_dialog.values()["startDate"] == "2026-06-01"
     assert daily_dialog.values()["date"] == "2026-06-02"
+
+
+def test_core_business_dialogs_use_modern_base():
+    app()
+    project = Project(
+        name="Project",
+        deadline="2026-06-30",
+        tasks=[Task(id="t1", title="Task", startDate="2026-06-01")],
+    )
+
+    dialogs = [
+        ProjectDialog(project),
+        TaskDialog(project, project.tasks[0], selected_date="2026-06-02"),
+        DailyDialog(project, selected_date="2026-06-02"),
+        ArchiveDialog(project),
+        InboxTaskDialog(),
+    ]
+
+    assert all(isinstance(dialog, AppDialog) for dialog in dialogs)
+    assert all(not dialog.windowIcon().isNull() for dialog in dialogs)
+
+
+def test_main_window_uses_application_icon(monkeypatch):
+    window = window_for_workspace(monkeypatch, make_cross_project_workspace())
+
+    assert not window.windowIcon().isNull()
+
+
+def test_packaging_scripts_embed_application_icon():
+    root = Path(__file__).resolve().parents[1]
+    build_exe = (root / "build_exe.bat").read_text(encoding="utf-8")
+    build_setup = (root / "build_setup.ps1").read_text(encoding="utf-8")
+
+    assert "--icon" in build_exe
+    assert "assets\\project_manage.ico" in build_exe
+    assert "--icon $IconPath" in build_setup
+    assert "$shortcut.IconLocation" in build_setup
 
 
 def test_sidebar_navigation_uses_embedded_pages():

@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "Project_Manage_LocalV3.3"
+    [string]$Version = "Project_Manage_LocalV3.4"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,23 +10,27 @@ $IExpressSed = Join-Path $Root "build\setup.iexpress.sed"
 $ExeName = "$Version.exe"
 $SetupName = "${Version}_Setup.exe"
 $SetupPath = Join-Path $Dist $SetupName
+$IconPath = Join-Path $Root "assets\project_manage.ico"
 
 Set-Location $Root
 python -m pip install -r requirements.txt
-python -m PyInstaller --noconfirm --clean --windowed --onefile --name $Version main.py
+python -m PyInstaller --noconfirm --clean --windowed --onefile --name $Version --icon $IconPath --add-data "assets;assets" main.py
 
+if (Test-Path $SetupSrc) {
+    Remove-Item -Recurse -Force $SetupSrc
+}
 New-Item -ItemType Directory -Force -Path $SetupSrc | Out-Null
 Copy-Item -Force (Join-Path $Dist $ExeName) (Join-Path $SetupSrc $ExeName)
 
-$InstallBat = Join-Path $SetupSrc "install_project_manage_v3.3.bat"
+$InstallBat = Join-Path $SetupSrc "install_project_manage_v3.4.bat"
 @"
 @echo off
 setlocal
-set "APP_DIR=%LOCALAPPDATA%\Programs\Project_Manage_LocalV3.3"
+set "APP_DIR=%LOCALAPPDATA%\Programs\Project_Manage_LocalV3.4"
 if not exist "%APP_DIR%" mkdir "%APP_DIR%"
 copy /Y "%~dp0$ExeName" "%APP_DIR%\$ExeName" >nul
-powershell -NoProfile -ExecutionPolicy Bypass -Command "`$desktop=[Environment]::GetFolderPath('Desktop');`$shortcut=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path `$desktop 'Project Manage Local V3.3.lnk'));`$shortcut.TargetPath=(Join-Path `$env:LOCALAPPDATA 'Programs\Project_Manage_LocalV3.3\$ExeName');`$shortcut.WorkingDirectory=(Join-Path `$env:LOCALAPPDATA 'Programs\Project_Manage_LocalV3.3');`$shortcut.Save()"
-echo Project Manage Local V3.3 installed to "%APP_DIR%".
+powershell -NoProfile -ExecutionPolicy Bypass -Command "`$desktop=[Environment]::GetFolderPath('Desktop');`$shortcut=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path `$desktop 'Project Manage Local V3.4.lnk'));`$shortcut.TargetPath=(Join-Path `$env:LOCALAPPDATA 'Programs\Project_Manage_LocalV3.4\$ExeName');`$shortcut.WorkingDirectory=(Join-Path `$env:LOCALAPPDATA 'Programs\Project_Manage_LocalV3.4');`$shortcut.IconLocation=`$shortcut.TargetPath;`$shortcut.Save()"
+echo Project Manage Local V3.4 installed to "%APP_DIR%".
 exit /b 0
 "@ | Set-Content -Encoding ASCII $InstallBat
 
@@ -45,7 +49,7 @@ CAB_ResvCodeSigning=0
 RebootMode=N
 InstallPrompt=
 DisplayLicense=
-FinishMessage=Project Manage Local V3.3 installed.
+FinishMessage=Project Manage Local V3.4 installed.
 TargetName=%TargetName%
 FriendlyName=%FriendlyName%
 AppLaunched=%AppLaunched%
@@ -60,11 +64,11 @@ SourceFiles0=$SetupSrc\
 %FILE1%=
 [Strings]
 TargetName="$SetupPath"
-FriendlyName="Project Manage Local V3.3 Setup"
-AppLaunched="install_project_manage_v3.3.bat"
+FriendlyName="Project Manage Local V3.4 Setup"
+AppLaunched="install_project_manage_v3.4.bat"
 PostInstallCmd="<None>"
 FILE0="$ExeName"
-FILE1="install_project_manage_v3.3.bat"
+FILE1="install_project_manage_v3.4.bat"
 "@
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $IExpressSed) | Out-Null

@@ -5,7 +5,7 @@ from datetime import date
 from uuid import uuid4
 
 
-APP_VERSION = "Project_Manage_LocalV3.3"
+APP_VERSION = "Project_Manage_LocalV3.4"
 
 
 def new_id() -> str:

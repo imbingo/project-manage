@@ -1,5 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import ctypes
 import subprocess
 import sys
 import tempfile
@@ -7,7 +8,7 @@ from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QEvent, QPoint, QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractScrollArea,
@@ -16,7 +17,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMenu,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -74,11 +73,12 @@ from .storage import data_dir, load_workspace, save_workspace
 STATUS_LABELS = {"Open": "未开始", "Ongoing": "进行中", "Closed": "已关闭"}
 RISK_COLORS = {"H": "#dc2626", "M": "#d97706", "L": "#0f766e"}
 STATUS_COLORS = {"Open": "#64748b", "Ongoing": "#2563eb", "Closed": "#0f766e"}
+APP_USER_MODEL_ID = "imbingo.ProjectManageLocal.V34"
 
 
 QSS = """
 QMainWindow { background: #eceff3; }
-QDialog, QMessageBox { background: #eceff3; }
+QDialog { background: #eceff3; }
 QWidget { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial; font-size: 13px; color: #2b333c; }
 #centralRoot { background: #eceff3; }
 #appBar { background: #ffffff; border-bottom: 1px solid #e7ebef; }
@@ -165,6 +165,14 @@ QTabBar::tab:selected { background: #ffffff; color: #1f2933; }
 QMenu { background: #ffffff; border: 1px solid #d8dee8; border-radius: 10px; padding: 6px; }
 QMenu::item { padding: 9px 18px; border-radius: 7px; }
 QMenu::item:selected { background: #eaf1f9; color: #2f6db0; }
+QFrame#dialogSurface {
+  background: #ffffff; border: 1px solid #e4e9ef; border-radius: 14px;
+}
+QLabel#dialogCaption { color: #2f6db0; font-size: 11px; font-weight: 900; letter-spacing: 1px; }
+QLabel#dialogTitle { color: #111827; font-size: 20px; font-weight: 900; }
+QLabel#dialogDesc, QLabel#messageBody { color: #5b6672; line-height: 1.5; }
+QFrame#messageMark { border-radius: 18px; }
+QPushButton#dialogCancel { background: #f8fafc; color: #46505a; border-color: #dde2e7; }
 """
 
 
@@ -373,11 +381,144 @@ def app_stylesheet() -> str:
     ) % (down, up, down)
 
 
-class ProjectDialog(QDialog):
-    def __init__(self, project: Project | None = None, parent=None) -> None:
+def resource_path(relative_path: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+    return base / relative_path
+
+
+def app_icon() -> QIcon:
+    return QIcon(str(resource_path("assets/project_manage.ico")))
+
+
+def set_windows_app_id() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        pass
+
+
+class AppDialog(QDialog):
+    def __init__(self, title: str, description: str = "", parent=None, size: QSize | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("项目设置" if project else "新增项目")
-        self.resize(560, 430)
+        self.setWindowTitle(title)
+        self.setWindowIcon(app_icon())
+        self.setObjectName("modernDialog")
+        if size:
+            self.resize(size)
+            self.setMinimumWidth(min(max(size.width(), 520), 720))
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 14, 14, 14)
+        outer.setSpacing(0)
+        surface = QFrame()
+        surface.setObjectName("dialogSurface")
+        outer.addWidget(surface)
+
+        box = QVBoxLayout(surface)
+        box.setContentsMargins(22, 18, 22, 18)
+        box.setSpacing(14)
+
+        caption = QLabel("PROJECT DESK")
+        caption.setObjectName("dialogCaption")
+        heading = QLabel(title)
+        heading.setObjectName("dialogTitle")
+        heading.setWordWrap(True)
+        box.addWidget(caption)
+        box.addWidget(heading)
+        if description:
+            desc = QLabel(description)
+            desc.setObjectName("dialogDesc")
+            desc.setWordWrap(True)
+            box.addWidget(desc)
+
+        self.form = QFormLayout()
+        self.form.setContentsMargins(0, 4, 0, 2)
+        self.form.setHorizontalSpacing(14)
+        self.form.setVerticalSpacing(12)
+        self.form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.form.setFormAlignment(Qt.AlignTop)
+        box.addLayout(self.form, 1)
+
+        self.button_row = QHBoxLayout()
+        self.button_row.setSpacing(8)
+        box.addLayout(self.button_row)
+
+    def add_standard_buttons(self, accept_text: str = "保存", cancel_text: str = "取消", danger: bool = False) -> None:
+        self.button_row.addStretch()
+        cancel = QPushButton(cancel_text)
+        cancel.setObjectName("dialogCancel")
+        accept = QPushButton(accept_text)
+        accept.setObjectName("danger" if danger else "primary")
+        cancel.clicked.connect(self.reject)
+        accept.clicked.connect(self.accept)
+        self.button_row.addWidget(cancel)
+        self.button_row.addWidget(accept)
+
+
+class ModernMessageDialog(AppDialog):
+    def __init__(
+        self,
+        title: str,
+        message: str,
+        parent=None,
+        kind: str = "info",
+        accept_text: str = "知道了",
+        cancel_text: str | None = None,
+        danger: bool = False,
+    ) -> None:
+        super().__init__(title, "", parent, QSize(460, 240))
+        color = {"info": "#2f6db0", "warning": "#d97706", "error": "#dc2626", "danger": "#dc2626"}.get(kind, "#2f6db0")
+        row = QHBoxLayout()
+        mark = QFrame()
+        mark.setObjectName("messageMark")
+        mark.setFixedSize(36, 36)
+        mark.setStyleSheet(f"QFrame#messageMark {{ background: {color}; }}")
+        body = QLabel(message)
+        body.setObjectName("messageBody")
+        body.setWordWrap(True)
+        row.addWidget(mark)
+        row.addWidget(body, 1)
+        self.form.addRow(row)
+        self.button_row.addStretch()
+        if cancel_text:
+            cancel = QPushButton(cancel_text)
+            cancel.setObjectName("dialogCancel")
+            cancel.clicked.connect(self.reject)
+            self.button_row.addWidget(cancel)
+        accept = QPushButton(accept_text)
+        accept.setObjectName("danger" if danger else "primary")
+        accept.clicked.connect(self.accept)
+        self.button_row.addWidget(accept)
+
+
+def show_info(parent, title: str, message: str) -> None:
+    ModernMessageDialog(title, message, parent, "info").exec()
+
+
+def show_warning(parent, title: str, message: str) -> None:
+    ModernMessageDialog(title, message, parent, "warning").exec()
+
+
+def show_error(parent, title: str, message: str) -> None:
+    ModernMessageDialog(title, message, parent, "error").exec()
+
+
+def confirm(parent, title: str, message: str, accept_text: str = "确认", danger: bool = False) -> bool:
+    kind = "danger" if danger else "warning"
+    dialog = ModernMessageDialog(title, message, parent, kind, accept_text=accept_text, cancel_text="取消", danger=danger)
+    return dialog.exec() == QDialog.Accepted
+
+
+class ProjectDialog(AppDialog):
+    def __init__(self, project: Project | None = None, parent=None) -> None:
+        super().__init__(
+            "项目设置" if project else "新增项目",
+            "维护项目名称、Deadline、一句话总结、TOP 风险和下一步计划。",
+            parent,
+            QSize(600, 470),
+        )
         self.name = QLineEdit(project.name if project else "")
         self.deadline = make_date_edit(project.deadline if project else today())
         self.summary = QTextEdit(project.summary if project else "")
@@ -386,16 +527,13 @@ class ProjectDialog(QDialog):
         for text_edit in [self.summary, self.top_risk, self.next_step]:
             text_edit.setFixedHeight(82)
 
-        form = QFormLayout(self)
+        form = self.form
         form.addRow("项目名称", self.name)
         form.addRow("Deadline", self.deadline)
         form.addRow("一句话总结", self.summary)
         form.addRow("TOP 风险", self.top_risk)
         form.addRow("下一步计划", self.next_step)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        self.add_standard_buttons()
 
     def browse_archive_path(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "选择归档文件", "", "All Files (*.*)")
@@ -415,11 +553,14 @@ class ProjectDialog(QDialog):
         }
 
 
-class TaskDialog(QDialog):
+class TaskDialog(AppDialog):
     def __init__(self, project: Project, task: Task | None = None, selected_date: str = "", parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("编辑任务" if task else "新增任务")
-        self.resize(560, 560)
+        super().__init__(
+            "编辑任务" if task else "新增任务",
+            "维护任务层级、周期、负责人、状态、进度和归档信息。",
+            parent,
+            QSize(620, 650),
+        )
         self.parent_task = QComboBox()
         self.parent_task.addItem("无父任务", "")
         for item in project.tasks:
@@ -461,7 +602,7 @@ class TaskDialog(QDialog):
             self.risk.setCurrentText(task.risk)
             self.status.setCurrentText(task.status)
 
-        form = QFormLayout(self)
+        form = self.form
         form.addRow("父任务", self.parent_task)
         form.addRow("风险", self.risk)
         form.addRow("任务名称", self.title)
@@ -476,10 +617,7 @@ class TaskDialog(QDialog):
         form.addRow("归档类型", self.archive_type)
         form.addRow("归档关键词", self.archive_keywords)
         form.addRow("归档文件/目录", archive_path_row)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        self.add_standard_buttons()
 
     def browse_archive_path(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "选择归档文件", "", "All Files (*.*)")
@@ -508,11 +646,14 @@ class TaskDialog(QDialog):
         }
 
 
-class DailyDialog(QDialog):
+class DailyDialog(AppDialog):
     def __init__(self, project: Project, log: DailyLog | None = None, selected_date: str = "", parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("编辑日报" if log else "新增日报")
-        self.resize(580, 520)
+        super().__init__(
+            "编辑日报" if log else "新增日报",
+            "记录当天计划、实际完成、进度和延期原因；延期时必须填写原因。",
+            parent,
+            QSize(620, 610),
+        )
         self.task = QComboBox()
         for item in project.tasks:
             self.task.addItem(item.title, item.id)
@@ -536,7 +677,7 @@ class DailyDialog(QDialog):
             self.task.setCurrentIndex(max(0, self.task.findData(log.taskId)))
             self.result.setCurrentText(log.result)
 
-        form = QFormLayout(self)
+        form = self.form
         form.addRow("关联任务", self.task)
         form.addRow("日期", self.date)
         form.addRow("负责人", self.responsible)
@@ -546,10 +687,7 @@ class DailyDialog(QDialog):
         form.addRow("实际%", self.actual)
         form.addRow("结果", self.result)
         form.addRow("延期原因", self.delay_reason)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        self.add_standard_buttons()
 
     def values(self) -> dict:
         return {
@@ -565,11 +703,14 @@ class DailyDialog(QDialog):
         }
 
 
-class ArchiveDialog(QDialog):
+class ArchiveDialog(AppDialog):
     def __init__(self, project: Project, archive: ArchiveItem | None = None, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("编辑项目档案" if archive else "新增项目档案")
-        self.resize(620, 560)
+        super().__init__(
+            "编辑项目档案" if archive else "新增项目档案",
+            "归档实验数据、会议纪要、交付版本或其他关键资料。",
+            parent,
+            QSize(660, 650),
+        )
         self.project = project
         self.date = make_date_edit(archive.date if archive else today())
         self.type = QComboBox()
@@ -596,7 +737,7 @@ class ArchiveDialog(QDialog):
             self.status.setCurrentText(archive.status)
             self.related_task.setCurrentIndex(max(0, self.related_task.findData(archive.relatedTaskId)))
 
-        form = QFormLayout(self)
+        form = self.form
         form.addRow("日期", self.date)
         form.addRow("类型", self.type)
         form.addRow("标题", self.title)
@@ -606,10 +747,7 @@ class ArchiveDialog(QDialog):
         form.addRow("关联任务", self.related_task)
         form.addRow("状态", self.status)
         form.addRow("摘要/结论", self.summary)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        self.add_standard_buttons()
 
     def browse_path(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "选择归档文件", "", "All Files (*.*)")
@@ -636,11 +774,14 @@ class ArchiveDialog(QDialog):
         }
 
 
-class InboxTaskDialog(QDialog):
+class InboxTaskDialog(AppDialog):
     def __init__(self, item: InboxTask | None = None, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("编辑待归档任务" if item else "新增待归档任务")
-        self.resize(600, 460)
+        super().__init__(
+            "编辑待归档任务" if item else "新增待归档任务",
+            "先收集暂时无法归入项目的任务、资料和线索，后续再归档或转任务。",
+            parent,
+            QSize(620, 520),
+        )
         self.created = make_date_edit(item.createdDate if item else today())
         self.title = QLineEdit(item.title if item else "")
         self.source = QLineEdit(item.source if item else "手动记录")
@@ -650,16 +791,13 @@ class InboxTaskDialog(QDialog):
         self.description.setFixedHeight(160)
         if item:
             self.status.setCurrentText(item.status)
-        form = QFormLayout(self)
+        form = self.form
         form.addRow("记录日期", self.created)
         form.addRow("标题", self.title)
         form.addRow("来源", self.source)
         form.addRow("状态", self.status)
         form.addRow("说明", self.description)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        self.add_standard_buttons()
 
     def values(self) -> dict:
         return {
@@ -1125,7 +1263,8 @@ class MainWindow(QMainWindow):
         self.selected_task_id: str | None = None
         self.selected_log_id: str | None = None
         self.active_page_name = "任务计划"
-        self.setWindowTitle("Project_Manage_LocalV3.3")
+        self.setWindowTitle("Project_Manage_LocalV3.4")
+        self.setWindowIcon(app_icon())
         self.resize(1680, 980)
         self.setMinimumSize(1280, 760)
         self._build_ui()
@@ -1237,7 +1376,7 @@ class MainWindow(QMainWindow):
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(22, 14, 22, 14)
         title_box = QVBoxLayout()
-        eyebrow = QLabel("Project_Manage_LocalV3.3")
+        eyebrow = QLabel("Project_Manage_LocalV3.4")
         eyebrow.setStyleSheet("color:#2563eb;font-weight:900;font-size:12px;")
         self.title = QLabel()
         self.title.setStyleSheet("font-size:26px;font-weight:900;")
@@ -1818,7 +1957,7 @@ class MainWindow(QMainWindow):
         def enter_project() -> None:
             project, task = selected_pair()
             if not project or not task:
-                QMessageBox.information(page, "请选择任务", "请先选中一条每日任务。")
+                show_info(page, "请选择任务", "请先选中一条每日任务。")
                 return
             self.workspace.selectedDate = date_input.date().toString("yyyy-MM-dd")
             self._switch_to_task_plan(project.id, task.id)
@@ -1826,7 +1965,7 @@ class MainWindow(QMainWindow):
         def write_daily() -> None:
             project, task = selected_pair()
             if not project or not task:
-                QMessageBox.information(page, "请选择任务", "请先选中一条每日任务。")
+                show_info(page, "请选择任务", "请先选中一条每日任务。")
                 return
             self.workspace.selectedDate = date_input.date().toString("yyyy-MM-dd")
             self._switch_to_task_plan(project.id, task.id)
@@ -1835,7 +1974,7 @@ class MainWindow(QMainWindow):
         def edit_selected_task() -> None:
             project, task = selected_pair()
             if not project or not task:
-                QMessageBox.information(page, "请选择任务", "请先选中一条每日任务。")
+                show_info(page, "请选择任务", "请先选中一条每日任务。")
                 return
             self._switch_to_task_plan(project.id, task.id)
             self.edit_task()
@@ -2020,14 +2159,14 @@ class MainWindow(QMainWindow):
         def edit_current() -> None:
             project, task = sync_selection()
             if not project or not task:
-                QMessageBox.information(page, "请选择任务", "请先选中一条任务。")
+                show_info(page, "请选择任务", "请先选中一条任务。")
                 return
             self.edit_task()
 
         def delete_current() -> None:
             project, task = sync_selection()
             if not project or not task:
-                QMessageBox.information(page, "请选择任务", "请先选中一条任务。")
+                show_info(page, "请选择任务", "请先选中一条任务。")
                 return
             self.delete_task()
 
@@ -2146,7 +2285,7 @@ class MainWindow(QMainWindow):
         def edit_item() -> None:
             project, archive = selected_archive_pair()
             if not project or not archive:
-                QMessageBox.information(page, "请选择档案", "请先选中一条档案记录。")
+                show_info(page, "请选择档案", "请先选中一条档案记录。")
                 return
             dialog = ArchiveDialog(project, archive, page)
             if dialog.exec() == QDialog.Accepted:
@@ -2158,9 +2297,9 @@ class MainWindow(QMainWindow):
         def delete_item() -> None:
             project, archive = selected_archive_pair()
             if not project or not archive:
-                QMessageBox.information(page, "请选择档案", "请先选中一条档案记录。")
+                show_info(page, "请选择档案", "请先选中一条档案记录。")
                 return
-            if QMessageBox.question(page, "确认删除", f"删除档案“{archive.title}”？") == QMessageBox.Yes:
+            if confirm(page, "确认删除", f"删除档案“{archive.title}”？", "删除", True):
                 delete_archive(project, archive.id)
                 save_workspace(self.workspace)
                 render()
@@ -2169,13 +2308,13 @@ class MainWindow(QMainWindow):
         def open_path() -> None:
             _project, archive = selected_archive_pair()
             if not archive or not archive.path:
-                QMessageBox.information(page, "没有路径", "该档案没有填写文件或目录路径。")
+                show_info(page, "没有路径", "该档案没有填写文件或目录路径。")
                 return
             path = Path(archive.path)
             if path.exists():
                 subprocess.Popen(["explorer", str(path if path.is_dir() else path.parent)])
             else:
-                QMessageBox.warning(page, "路径不存在", str(path))
+                show_warning(page, "路径不存在", str(path))
 
         search_input.textChanged.connect(lambda _text: render())
         project_filter.currentIndexChanged.connect(lambda _index: render())
@@ -2263,7 +2402,7 @@ class MainWindow(QMainWindow):
         def edit_item() -> None:
             item = selected_item()
             if not item:
-                QMessageBox.information(page, "请选择待归档任务", "请先选中一条记录。")
+                show_info(page, "请选择待归档任务", "请先选中一条记录。")
                 return
             dialog = InboxTaskDialog(item, page)
             if dialog.exec() == QDialog.Accepted:
@@ -2276,9 +2415,9 @@ class MainWindow(QMainWindow):
         def delete_item() -> None:
             item = selected_item()
             if not item:
-                QMessageBox.information(page, "请选择待归档任务", "请先选中一条记录。")
+                show_info(page, "请选择待归档任务", "请先选中一条记录。")
                 return
-            if QMessageBox.question(page, "确认删除", f"删除待归档任务“{item.title}”？") == QMessageBox.Yes:
+            if confirm(page, "确认删除", f"删除待归档任务“{item.title}”？", "删除", True):
                 delete_inbox_task(self.workspace, item.id)
                 save_workspace(self.workspace)
                 render()
@@ -2295,7 +2434,7 @@ class MainWindow(QMainWindow):
         def accept_selected() -> None:
             item = selected_item()
             if not item:
-                QMessageBox.information(page, "请选择待归档任务", "请先选中一条记录。")
+                show_info(page, "请选择待归档任务", "请先选中一条记录。")
                 return
             if not item.suggestedAction:
                 suggest_inbox_task(self.workspace, item)
@@ -2304,13 +2443,13 @@ class MainWindow(QMainWindow):
             render()
             self.refresh()
             if result is None:
-                QMessageBox.information(page, "需要人工判断", "该记录暂未形成明确建议，可手动转为任务、归档或新增项目。")
+                show_info(page, "需要人工判断", "该记录暂未形成明确建议，可手动转为任务、归档或新增项目。")
 
         def to_task_selected_project() -> None:
             item = selected_item()
             project = selected_target_project()
             if not item or not project:
-                QMessageBox.information(page, "请选择目标项目", "请先选择要转入的项目。")
+                show_info(page, "请选择目标项目", "请先选择要转入的项目。")
                 return
             task = add_task_to_project(project, today(), {"title": item.title or "待归档任务", "note": item.description, "risk": "M", "duration": 1, "status": "Open", "plannedProgress": 0, "actualProgress": 0})
             item.status = "已转项目任务"
@@ -2448,7 +2587,7 @@ class MainWindow(QMainWindow):
         def edit_current() -> None:
             project, log = selected_log_pair()
             if not project or not log:
-                QMessageBox.information(page, "请选择日报", "请先选中一条日报记录。")
+                show_info(page, "请选择日报", "请先选中一条日报记录。")
                 return
             select_current_log()
             self.edit_daily()
@@ -2456,7 +2595,7 @@ class MainWindow(QMainWindow):
         def delete_current() -> None:
             project, log = selected_log_pair()
             if not project or not log:
-                QMessageBox.information(page, "请选择日报", "请先选中一条日报记录。")
+                show_info(page, "请选择日报", "请先选中一条日报记录。")
                 return
             select_current_log()
             self.delete_daily()
@@ -2578,9 +2717,10 @@ class MainWindow(QMainWindow):
         table.horizontalHeader().setStretchLastSection(True)
         table.resizeColumnsToContents()
         layout.addWidget(table)
-        close = QDialogButtonBox(QDialogButtonBox.Close)
-        close.rejected.connect(dialog.reject)
-        layout.addWidget(close)
+        close = QPushButton("关闭")
+        close.setObjectName("dialogCancel")
+        close.clicked.connect(dialog.reject)
+        layout.addWidget(close, alignment=Qt.AlignRight)
         dialog.exec()
 
 
@@ -2740,7 +2880,7 @@ class MainWindow(QMainWindow):
         def enter_project() -> None:
             project, task = selected_pair()
             if not project or not task:
-                QMessageBox.information(dialog, "请选择任务", "请先选中一条每日任务。")
+                show_info(dialog, "请选择任务", "请先选中一条每日任务。")
                 return
             self.workspace.selectedProjectId = project.id
             self.workspace.selectedDate = date_input.date().toString("yyyy-MM-dd")
@@ -2754,7 +2894,7 @@ class MainWindow(QMainWindow):
         def write_daily() -> None:
             project, task = selected_pair()
             if not project or not task:
-                QMessageBox.information(dialog, "请选择任务", "请先选中一条每日任务。")
+                show_info(dialog, "请选择任务", "请先选中一条每日任务。")
                 return
             self.workspace.selectedProjectId = project.id
             self.workspace.selectedDate = date_input.date().toString("yyyy-MM-dd")
@@ -2767,7 +2907,7 @@ class MainWindow(QMainWindow):
         def edit_selected_task() -> None:
             project, task = selected_pair()
             if not project or not task:
-                QMessageBox.information(dialog, "请选择任务", "请先选中一条每日任务。")
+                show_info(dialog, "请选择任务", "请先选中一条每日任务。")
                 return
             self.workspace.selectedProjectId = project.id
             self.selected_task_id = task.id
@@ -3003,7 +3143,7 @@ class MainWindow(QMainWindow):
         def edit_item() -> None:
             project, archive = selected_archive_pair()
             if not project or not archive:
-                QMessageBox.information(dialog, "请选择档案", "请先选中一条档案记录。")
+                show_info(dialog, "请选择档案", "请先选中一条档案记录。")
                 return
             dlg = ArchiveDialog(project, archive, dialog)
             if dlg.exec() == QDialog.Accepted:
@@ -3015,9 +3155,9 @@ class MainWindow(QMainWindow):
         def delete_item() -> None:
             project, archive = selected_archive_pair()
             if not project or not archive:
-                QMessageBox.information(dialog, "请选择档案", "请先选中一条档案记录。")
+                show_info(dialog, "请选择档案", "请先选中一条档案记录。")
                 return
-            if QMessageBox.question(dialog, "确认删除", f"删除档案“{archive.title}”？") == QMessageBox.Yes:
+            if confirm(dialog, "确认删除", f"删除档案“{archive.title}”？", "删除", True):
                 delete_archive(project, archive.id)
                 save_workspace(self.workspace)
                 render()
@@ -3026,13 +3166,13 @@ class MainWindow(QMainWindow):
         def open_path() -> None:
             _project, archive = selected_archive_pair()
             if not archive or not archive.path:
-                QMessageBox.information(dialog, "没有路径", "该档案没有填写文件或目录路径。")
+                show_info(dialog, "没有路径", "该档案没有填写文件或目录路径。")
                 return
             path = Path(archive.path)
             if path.exists():
                 subprocess.Popen(["explorer", str(path if path.is_dir() else path.parent)])
             else:
-                QMessageBox.warning(dialog, "路径不存在", str(path))
+                show_warning(dialog, "路径不存在", str(path))
 
         search_input.textChanged.connect(lambda _text: render())
         project_filter.currentIndexChanged.connect(lambda _index: render())
@@ -3114,7 +3254,7 @@ class MainWindow(QMainWindow):
         def edit_item() -> None:
             item = selected_item()
             if not item:
-                QMessageBox.information(dialog, "请选择待归档任务", "请先选中一条记录。")
+                show_info(dialog, "请选择待归档任务", "请先选中一条记录。")
                 return
             dlg = InboxTaskDialog(item, dialog)
             if dlg.exec() == QDialog.Accepted:
@@ -3127,9 +3267,9 @@ class MainWindow(QMainWindow):
         def delete_item() -> None:
             item = selected_item()
             if not item:
-                QMessageBox.information(dialog, "请选择待归档任务", "请先选中一条记录。")
+                show_info(dialog, "请选择待归档任务", "请先选中一条记录。")
                 return
-            if QMessageBox.question(dialog, "确认删除", f"删除待归档任务“{item.title}”？") == QMessageBox.Yes:
+            if confirm(dialog, "确认删除", f"删除待归档任务“{item.title}”？", "删除", True):
                 delete_inbox_task(self.workspace, item.id)
                 save_workspace(self.workspace)
                 render()
@@ -3146,7 +3286,7 @@ class MainWindow(QMainWindow):
         def accept_selected() -> None:
             item = selected_item()
             if not item:
-                QMessageBox.information(dialog, "请选择待归档任务", "请先选中一条记录。")
+                show_info(dialog, "请选择待归档任务", "请先选中一条记录。")
                 return
             if not item.suggestedAction:
                 suggest_inbox_task(self.workspace, item)
@@ -3156,9 +3296,9 @@ class MainWindow(QMainWindow):
             render()
             self.refresh()
             if result is None:
-                QMessageBox.information(dialog, "需要人工判断", "该记录暂未形成明确建议，可手动转为任务、归档或新增项目。")
+                show_info(dialog, "需要人工判断", "该记录暂未形成明确建议，可手动转为任务、归档或新增项目。")
             else:
-                QMessageBox.information(dialog, "已采纳建议", f"已执行：{item.suggestedAction}")
+                show_info(dialog, "已采纳建议", f"已执行：{item.suggestedAction}")
 
         def to_task_current() -> None:
             item = selected_item()
@@ -3179,7 +3319,7 @@ class MainWindow(QMainWindow):
         def archive_current() -> None:
             item = selected_item()
             if not item:
-                QMessageBox.information(dialog, "请选择待归档任务", "请先选中一条记录。")
+                show_info(dialog, "请选择待归档任务", "请先选中一条记录。")
                 return
             chooser = QDialog(dialog)
             chooser.setWindowTitle("手动归档待归档任务")
@@ -3225,10 +3365,17 @@ class MainWindow(QMainWindow):
             form.addRow("档案类型", archive_type)
             form.addRow("关键词", keywords)
             form.addRow("路径", path_row)
-            buttons_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-            buttons_box.accepted.connect(chooser.accept)
-            buttons_box.rejected.connect(chooser.reject)
-            form.addRow(buttons_box)
+            button_row = QHBoxLayout()
+            cancel = QPushButton("取消")
+            cancel.setObjectName("dialogCancel")
+            ok = QPushButton("确定")
+            ok.setObjectName("primary")
+            cancel.clicked.connect(chooser.reject)
+            ok.clicked.connect(chooser.accept)
+            button_row.addStretch()
+            button_row.addWidget(cancel)
+            button_row.addWidget(ok)
+            form.addRow(button_row)
             if chooser.exec() != QDialog.Accepted:
                 return
             project_id = project_combo.currentData()
@@ -3393,10 +3540,11 @@ class MainWindow(QMainWindow):
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, fn=handler, dlg=dialog: (dlg.accept(), fn()))
             layout.addWidget(button)
-        close = QDialogButtonBox(QDialogButtonBox.Close)
-        close.rejected.connect(dialog.reject)
+        close = QPushButton("关闭")
+        close.setObjectName("dialogCancel")
+        close.clicked.connect(dialog.reject)
         layout.addStretch()
-        layout.addWidget(close)
+        layout.addWidget(close, alignment=Qt.AlignRight)
         dialog.exec()
 
     def refresh(self) -> None:
@@ -3596,13 +3744,12 @@ class MainWindow(QMainWindow):
         project = self.current_project()
         if not project:
             return
-        ok = QMessageBox.question(self, "确认删除", f"删除项目「{project.name}」会同时删除任务和日报，是否继续？")
-        if ok != QMessageBox.Yes:
+        if not confirm(self, "确认删除", f"删除项目「{project.name}」会同时删除任务和日报，是否继续？", "删除项目", True):
             return
         try:
             delete_project_from_workspace(self.workspace, project.id)
         except ValueError as exc:
-            QMessageBox.warning(self, "不能删除", str(exc))
+            show_warning(self, "不能删除", str(exc))
             return
         self.selected_task_id = None
         self.persist()
@@ -3624,7 +3771,7 @@ class MainWindow(QMainWindow):
         project = self.current_project()
         task = self.selected_task()
         if not project or not task:
-            QMessageBox.information(self, "请选择任务", "请先在任务计划视图中选中一行。")
+            show_info(self, "请选择任务", "请先在任务计划视图中选中一行。")
             return
         dialog = TaskDialog(project, task, self.workspace.selectedDate, self)
         if dialog.exec() != QDialog.Accepted:
@@ -3639,10 +3786,9 @@ class MainWindow(QMainWindow):
         project = self.current_project()
         task = self.selected_task()
         if not project or not task:
-            QMessageBox.information(self, "请选择任务", "请先在任务计划视图中选中一行。")
+            show_info(self, "请选择任务", "请先在任务计划视图中选中一行。")
             return
-        ok = QMessageBox.question(self, "确认删除", f"删除任务「{task.title}」会同时删除它的子任务和相关日报，是否继续？")
-        if ok != QMessageBox.Yes:
+        if not confirm(self, "确认删除", f"删除任务「{task.title}」会同时删除它的子任务和相关日报，是否继续？", "删除任务", True):
             return
         delete_task_from_project(project, task.id)
         self.selected_task_id = None
@@ -3653,7 +3799,7 @@ class MainWindow(QMainWindow):
         if not project:
             return
         if not project.tasks:
-            QMessageBox.warning(self, "缺少任务", "请先新增任务，再填写日报。")
+            show_warning(self, "缺少任务", "请先新增任务，再填写日报。")
             return
         dialog = DailyDialog(project, selected_date=self.workspace.selectedDate, parent=self)
         if dialog.exec() != QDialog.Accepted:
@@ -3664,7 +3810,7 @@ class MainWindow(QMainWindow):
         project = self.current_project()
         log = self.selected_log()
         if not project or not log:
-            QMessageBox.information(self, "请选择日报", "请先在日报记录中选中一行。")
+            show_info(self, "请选择日报", "请先在日报记录中选中一行。")
             return
         dialog = DailyDialog(project, log, self.workspace.selectedDate, self)
         if dialog.exec() != QDialog.Accepted:
@@ -3675,10 +3821,9 @@ class MainWindow(QMainWindow):
         project = self.current_project()
         log = self.selected_log()
         if not project or not log:
-            QMessageBox.information(self, "请选择日报", "请先在日报记录中选中一行。")
+            show_info(self, "请选择日报", "请先在日报记录中选中一行。")
             return
-        ok = QMessageBox.question(self, "确认删除", "删除这条日报会同步移除对应日期的任务进度，是否继续？")
-        if ok != QMessageBox.Yes:
+        if not confirm(self, "确认删除", "删除这条日报会同步移除对应日期的任务进度，是否继续？", "删除日报", True):
             return
         delete_log_from_project(project, log.id)
         self.selected_log_id = None
@@ -3693,7 +3838,7 @@ class MainWindow(QMainWindow):
             self.selected_task_id = saved.taskId
             self.selected_log_id = saved.id
         except ValueError as exc:
-            QMessageBox.warning(self, "保存失败", str(exc))
+            show_warning(self, "保存失败", str(exc))
             return
         self.persist()
 
@@ -3737,28 +3882,44 @@ class MainWindow(QMainWindow):
             save_workspace(self.workspace)
             self.refresh()
             mode_text = "覆盖" if mode == "replace" else "合并"
-            QMessageBox.information(self, "导入完成", "\n".join(diagnostics + [f"导入方式：{mode_text}"]))
+            show_info(self, "导入完成", "\n".join(diagnostics + [f"导入方式：{mode_text}"]))
         except Exception as exc:
-            QMessageBox.critical(self, "导入失败", str(exc))
+            show_error(self, "导入失败", str(exc))
 
     def _confirm_import_mode(self, workspace: Workspace, diagnostics: list[str]) -> str:
         project_count = len(workspace.projects)
         task_count = sum(len(project.tasks) for project in workspace.projects)
         log_count = sum(len(project.dailyLogs) for project in workspace.projects)
-        message = QMessageBox(self)
-        message.setWindowTitle("确认导入方式")
-        message.setText(f"识别到 {project_count} 个项目、{task_count} 个任务、{log_count} 条日报。")
-        message.setInformativeText("\n".join(diagnostics + ["请选择合并到当前数据，或覆盖当前全部本地数据。"]))
-        merge_button = message.addButton("合并到当前数据", QMessageBox.AcceptRole)
-        replace_button = message.addButton("覆盖当前数据", QMessageBox.DestructiveRole)
-        message.addButton("取消", QMessageBox.RejectRole)
-        message.exec()
-        clicked = message.clickedButton()
-        if clicked == merge_button:
-            return "merge"
-        if clicked == replace_button:
-            return "replace"
-        return "cancel"
+        dialog = AppDialog(
+            "确认导入方式",
+            f"识别到 {project_count} 个项目、{task_count} 个任务、{log_count} 条日报。",
+            self,
+            QSize(620, 360),
+        )
+        details = QLabel("\n".join(diagnostics + ["请选择合并到当前数据，或覆盖当前全部本地数据。"]))
+        details.setWordWrap(True)
+        details.setObjectName("messageBody")
+        dialog.form.addRow(details)
+        selected_mode = {"value": "cancel"}
+
+        def accept_mode(value: str) -> None:
+            selected_mode["value"] = value
+            dialog.accept()
+
+        cancel = QPushButton("取消")
+        cancel.setObjectName("dialogCancel")
+        replace = QPushButton("覆盖当前数据")
+        replace.setObjectName("danger")
+        merge = QPushButton("合并到当前数据")
+        merge.setObjectName("primary")
+        cancel.clicked.connect(dialog.reject)
+        replace.clicked.connect(lambda _checked=False: accept_mode("replace"))
+        merge.clicked.connect(lambda _checked=False: accept_mode("merge"))
+        dialog.button_row.addStretch()
+        dialog.button_row.addWidget(cancel)
+        dialog.button_row.addWidget(replace)
+        dialog.button_row.addWidget(merge)
+        return selected_mode["value"] if dialog.exec() == QDialog.Accepted else "cancel"
 
     def export_json(self) -> None:
         file_name, _ = QFileDialog.getSaveFileName(self, "导出 JSON 备份", "project-desk-workspace.json", "JSON Files (*.json)")
@@ -3784,14 +3945,18 @@ class MainWindow(QMainWindow):
     def open_data_dir(self) -> None:
         path = data_dir()
         path.mkdir(parents=True, exist_ok=True)
-        QMessageBox.information(self, "数据目录", f"这里保存本地数据 workspace.json 和自动备份文件。\n\n{path}")
+        show_info(self, "数据目录", f"这里保存本地数据 workspace.json 和自动备份文件。\n\n{path}")
         subprocess.Popen(["explorer", str(path)])
 
 
 def main() -> int:
+    set_windows_app_id()
     app = QApplication(sys.argv)
     app.setFont(QFont("Microsoft YaHei UI", 10))
+    app.setWindowIcon(app_icon())
     app.setStyleSheet(app_stylesheet())
     window = MainWindow()
     window.show()
     return app.exec()
+
+
