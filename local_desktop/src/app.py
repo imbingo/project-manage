@@ -43,7 +43,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json
+from .import_export import (
+    dump_workspace_json,
+    export_project_briefing_ppt,
+    export_project_excel,
+    export_tasks_csv,
+    export_weekly_report_excel,
+    load_workspace_json,
+    week_bounds,
+)
 from .metrics import add_days, days_between, overdue_count, project_progress, task_end_date, normalize_date, parse_int
 from .models import ArchiveItem, DailyLog, InboxTask, ProgressEntry, Project, Task, Workspace, today, APP_VERSION
 from .operations import (
@@ -73,7 +81,7 @@ from .storage import data_dir, load_workspace, save_workspace
 STATUS_LABELS = {"Open": "未开始", "Ongoing": "进行中", "Closed": "已关闭"}
 RISK_COLORS = {"H": "#dc2626", "M": "#d97706", "L": "#0f766e"}
 STATUS_COLORS = {"Open": "#64748b", "Ongoing": "#2563eb", "Closed": "#0f766e"}
-APP_USER_MODEL_ID = "imbingo.ProjectManageLocal.V35"
+APP_USER_MODEL_ID = "imbingo.ProjectManageLocal.V36"
 
 
 QSS = """
@@ -1283,7 +1291,7 @@ class MainWindow(QMainWindow):
         self.selected_task_id: str | None = None
         self.selected_log_id: str | None = None
         self.active_page_name = "任务计划"
-        self.setWindowTitle("Project_Manage_LocalV3.5")
+        self.setWindowTitle("Project_Manage_LocalV3.6")
         self.setWindowIcon(app_icon())
         self.resize(1680, 980)
         self.setMinimumSize(1280, 760)
@@ -1396,7 +1404,7 @@ class MainWindow(QMainWindow):
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(22, 14, 22, 14)
         title_box = QVBoxLayout()
-        eyebrow = QLabel("Project_Manage_LocalV3.5")
+        eyebrow = QLabel("Project_Manage_LocalV3.6")
         eyebrow.setStyleSheet("color:#2563eb;font-weight:900;font-size:12px;")
         self.title = QLabel()
         self.title.setStyleSheet("font-size:26px;font-weight:900;")
@@ -1428,7 +1436,7 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(add_task)
         top_layout.addWidget(add_daily)
         top_layout.addWidget(self._menu_button("项目", [("项目设置", self.edit_project), ("新增项目", self.add_project), ("删除项目", self.delete_project)]))
-        top_layout.addWidget(self._menu_button("数据", [("导入 JSON", self.import_json), ("导出 JSON", self.export_json), ("导出 CSV", self.export_csv), ("导出 Excel", self.export_excel), ("数据目录", self.open_data_dir)]))
+        top_layout.addWidget(self._menu_button("数据", [("导入 JSON", self.import_json), ("导出 JSON", self.export_json), ("导出 CSV", self.export_csv), ("导出 Excel", self.export_excel), ("导出本周周报", self.export_weekly_report), ("导出汇报 PPT", self.export_briefing_ppt), ("数据目录", self.open_data_dir)]))
         return top
 
     def _menu_button(self, label: str, items: list[tuple[str, object]]) -> QToolButton:
@@ -2692,7 +2700,7 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_data_center_page(self) -> QWidget:
-        page, layout = self._page_shell("数据中心", "导入/导出本地 JSON、CSV、Excel，或打开本地数据目录。")
+        page, layout = self._page_shell("数据中心", "导入/导出本地 JSON、CSV、Excel、周报和汇报 PPT，或打开本地数据目录。")
         grid = QGridLayout()
         grid.setSpacing(10)
         items = [
@@ -2700,6 +2708,8 @@ class MainWindow(QMainWindow):
             ("导出完整 JSON", "适合备份和跨设备迁移。", self.export_json, ""),
             ("导出当前项目 CSV", "导出当前项目任务台账。", self.export_csv, ""),
             ("导出当前项目 Excel", "生成包含概览、任务、日报和甘特日期表的 Excel。", self.export_excel, "alt"),
+            ("导出本周周报", "按选中日期所在周生成当前项目周报 Excel。", self.export_weekly_report, "alt"),
+            ("导出汇报 PPT", "生成当前项目本周汇报演示文稿。", self.export_briefing_ppt, "primary"),
             ("打开数据目录", "查看 workspace.json 和自动备份。", self.open_data_dir, ""),
         ]
         for index, (title, desc, handler, obj) in enumerate(items):
@@ -3555,7 +3565,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dialog)
         title = QLabel("数据中心")
         title.setStyleSheet("font-size:20px;font-weight:900;")
-        desc = QLabel("导入/导出本地 JSON、CSV、Excel，或打开本地数据目录。")
+        desc = QLabel("导入/导出本地 JSON、CSV、Excel、周报和汇报 PPT，或打开本地数据目录。")
         desc.setWordWrap(True)
         desc.setStyleSheet("color:#64748b;")
         layout.addWidget(title)
@@ -3565,6 +3575,8 @@ class MainWindow(QMainWindow):
             ("导出完整 JSON", self.export_json),
             ("导出当前项目 CSV", self.export_csv),
             ("导出当前项目 Excel", self.export_excel),
+            ("导出本周周报", self.export_weekly_report),
+            ("导出汇报 PPT", self.export_briefing_ppt),
             ("打开数据目录", self.open_data_dir),
         ]:
             button = QPushButton(label)
@@ -3971,6 +3983,42 @@ class MainWindow(QMainWindow):
         file_name, _ = QFileDialog.getSaveFileName(self, "导出 Excel 项目表", f"{project.name}-project-table.xlsx", "Excel Files (*.xlsx)")
         if file_name:
             export_project_excel(project, Path(file_name))
+
+    def export_weekly_report(self) -> None:
+        project = self.current_project()
+        if not project:
+            return
+        week_start, week_end = week_bounds(self.workspace.selectedDate)
+        stem = self._safe_export_stem(project.name)
+        file_name, _ = QFileDialog.getSaveFileName(self, "导出本周周报", f"{stem}-{week_start}_{week_end}-weekly-report.xlsx", "Excel Files (*.xlsx)")
+        if not file_name:
+            return
+        try:
+            export_weekly_report_excel(project, week_start, week_end, Path(file_name))
+        except Exception as exc:
+            show_error(self, "导出失败", str(exc))
+            return
+        show_info(self, "导出完成", f"本周周报已保存：\n\n{file_name}")
+
+    def export_briefing_ppt(self) -> None:
+        project = self.current_project()
+        if not project:
+            return
+        week_start, week_end = week_bounds(self.workspace.selectedDate)
+        stem = self._safe_export_stem(project.name)
+        file_name, _ = QFileDialog.getSaveFileName(self, "导出汇报 PPT", f"{stem}-{week_start}_{week_end}-briefing.pptx", "PowerPoint Files (*.pptx)")
+        if not file_name:
+            return
+        try:
+            export_project_briefing_ppt(project, week_start, week_end, Path(file_name))
+        except Exception as exc:
+            show_error(self, "导出失败", str(exc))
+            return
+        show_info(self, "导出完成", f"汇报 PPT 已保存：\n\n{file_name}")
+
+    def _safe_export_stem(self, value: str) -> str:
+        text = "".join("_" if char in '<>:"/\\|?*' else char for char in (value or "project"))
+        return text.strip().strip(".") or "project"
 
     def open_data_dir(self) -> None:
         path = data_dir()

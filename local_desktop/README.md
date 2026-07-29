@@ -1,4 +1,11 @@
-# Project_Manage_LocalV3.5
+# Project_Manage_LocalV3.6
+
+## V3.6 更新重点
+
+- **一键本周周报**：按当前选中日期所在周导出当前项目周报 Excel，包含摘要、日报、任务进展、风险延期、下周计划和归档证据。
+- **一键汇报 PPT**：生成当前项目 5 页左右的简洁汇报演示文稿，突出进度、风险、延期和下一步计划。
+- **数据中心入口补齐**：顶部“数据”菜单和左侧“数据中心”页面都可以直接导出周报和汇报 PPT。
+- **数据版本标记更新**：保存的 workspace 版本标记改为 `Project_Manage_LocalV3.6`。
 
 ## V3.5 更新重点
 
@@ -96,7 +103,7 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.5/Project_Manage_LocalV3.5.exe
+local_desktop/dist/Project_Manage_LocalV3.6/Project_Manage_LocalV3.6.exe
 ```
 
 ## 生成 Setup 安装程序
@@ -109,13 +116,13 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.5_Setup.exe
+local_desktop/dist/Project_Manage_LocalV3.6_Setup.exe
 ```
 
 安装程序会把主程序安装到：
 
 ```text
-%LOCALAPPDATA%/Programs/Project_Manage_LocalV3.5
+%LOCALAPPDATA%/Programs/Project_Manage_LocalV3.6
 ```
 
 ## 与网页版差异

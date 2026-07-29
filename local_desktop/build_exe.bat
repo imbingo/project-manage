@@ -2,6 +2,6 @@
 setlocal
 cd /d "%~dp0"
 python -m pip install -r requirements.txt
-python -m PyInstaller --noconfirm --windowed --name Project_Manage_LocalV3.5 --icon "assets\project_manage.ico" --add-data "src;src" --add-data "assets;assets" main.py
-echo Built dist\Project_Manage_LocalV3.5\Project_Manage_LocalV3.5.exe
+python -m PyInstaller --noconfirm --windowed --name Project_Manage_LocalV3.6 --icon "assets\project_manage.ico" --add-data "src;src" --add-data "assets;assets" main.py
+echo Built dist\Project_Manage_LocalV3.6\Project_Manage_LocalV3.6.exe
 pause

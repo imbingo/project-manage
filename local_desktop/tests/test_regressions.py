@@ -8,14 +8,15 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from openpyxl import load_workbook
+from pptx import Presentation as PptPresentation
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCalendarWidget, QComboBox, QDateEdit, QPushButton, QStackedWidget, QTableWidget
 
 import src.app as app_module
 from src.app import AppDialog, ArchiveDialog, DailyDialog, InboxTaskDialog, MainWindow, ProjectDialog, TaskDialog, app_icon, ordered_tasks, sorted_projects
-from src.import_export import dump_workspace_json, export_project_excel, export_tasks_csv, load_workspace_json, normalize_workspace
+from src.import_export import dump_workspace_json, export_project_briefing_ppt, export_project_excel, export_tasks_csv, export_weekly_report_excel, load_workspace_json, normalize_workspace, week_bounds
 from src.metrics import normalize_date, task_end_date
-from src.models import APP_VERSION, DailyLog, ProgressEntry, Project, Task, Workspace
+from src.models import APP_VERSION, ArchiveItem, DailyLog, ProgressEntry, Project, Task, Workspace
 from src.operations import delete_daily_log, save_daily_log, update_task
 from src.storage import load_workspace, save_workspace, workspace_path
 
@@ -194,8 +195,8 @@ def test_storage_writes_current_app_version(tmp_path, monkeypatch):
     assert load_workspace().version == APP_VERSION
 
 
-def test_app_version_is_v3_5():
-    assert APP_VERSION == "Project_Manage_LocalV3.5"
+def test_app_version_is_v3_6():
+    assert APP_VERSION == "Project_Manage_LocalV3.6"
 
 
 def test_application_icon_is_available():
@@ -264,6 +265,60 @@ def test_json_csv_excel_export_round_trip(tmp_path):
     values = [cell.value for row in workbook.active.iter_rows() for cell in row if cell.value]
     assert "Project" in values
     assert "Task" in values
+
+
+def test_week_bounds_uses_selected_date_week():
+    assert week_bounds("2026-06-03") == ("2026-06-01", "2026-06-07")
+    assert week_bounds("2026-06-07") == ("2026-06-01", "2026-06-07")
+
+
+def test_weekly_report_excel_and_briefing_ppt(tmp_path):
+    task = Task(
+        id="t1",
+        risk="H",
+        title="Critical task",
+        responsible="Owner",
+        startDate="2026-06-01",
+        duration=3,
+        status="Ongoing",
+        note="Needs support",
+        progressEntries=[ProgressEntry(entryDate="2026-06-03", plannedProgress=60, actualProgress=30)],
+    )
+    project = Project(
+        id="p1",
+        name="Report Project",
+        deadline="2026-06-30",
+        summary="One line summary",
+        topRisk="Top risk text",
+        nextStep="Next step text",
+        tasks=[task],
+        dailyLogs=[
+            DailyLog(taskId="t1", date="2026-06-03", responsible="Owner", planText="Plan", actualText="Actual", plannedProgress=60, actualProgress=30, result="延期", delayReason="Blocked"),
+            DailyLog(taskId="t1", date="2026-06-10", responsible="Owner", planText="Out", actualText="Out"),
+        ],
+        archives=[ArchiveItem(date="2026-06-03", title="Evidence", owner="Owner", summary="Archive summary")],
+    )
+    week_start, week_end = week_bounds("2026-06-03")
+    xlsx_path = tmp_path / "weekly.xlsx"
+    pptx_path = tmp_path / "briefing.pptx"
+
+    export_weekly_report_excel(project, week_start, week_end, xlsx_path)
+    export_project_briefing_ppt(project, week_start, week_end, pptx_path)
+
+    workbook = load_workbook(xlsx_path)
+    assert workbook.sheetnames == ["周报摘要", "本周日报", "任务进展", "风险与延期", "下周计划", "归档证据"]
+    weekly_values = [cell.value for row in workbook["本周日报"].iter_rows() for cell in row if cell.value]
+    risk_values = [cell.value for row in workbook["风险与延期"].iter_rows() for cell in row if cell.value]
+    assert "Actual" in weekly_values
+    assert "Out" not in weekly_values
+    assert "Blocked" in risk_values
+
+    presentation = PptPresentation(pptx_path)
+    slide_text = "\n".join(shape.text for slide in presentation.slides for shape in slide.shapes if hasattr(shape, "text"))
+    assert len(presentation.slides) == 5
+    assert "项目周报概览" in slide_text
+    assert "风险与延期" in slide_text
+    assert "Next step text" in slide_text
 
 
 def test_core_date_fields_use_calendar_widgets():
