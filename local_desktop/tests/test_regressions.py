@@ -194,8 +194,8 @@ def test_storage_writes_current_app_version(tmp_path, monkeypatch):
     assert load_workspace().version == APP_VERSION
 
 
-def test_app_version_is_v3_4():
-    assert APP_VERSION == "Project_Manage_LocalV3.4"
+def test_app_version_is_v3_5():
+    assert APP_VERSION == "Project_Manage_LocalV3.5"
 
 
 def test_application_icon_is_available():
@@ -301,6 +301,22 @@ def test_core_date_fields_use_calendar_widgets():
     assert daily_dialog.values()["date"] == "2026-06-02"
 
 
+def test_daily_dialog_defaults_to_selected_task_and_owner():
+    app()
+    project = Project(
+        name="Project",
+        tasks=[
+            Task(id="t1", title="Task A", responsible="Owner A", startDate="2026-06-01"),
+            Task(id="t2", title="Task B", responsible="Owner B", startDate="2026-06-02"),
+        ],
+    )
+
+    dialog = DailyDialog(project, selected_date="2026-06-03", selected_task_id="t2")
+
+    assert dialog.values()["taskId"] == "t2"
+    assert dialog.values()["responsible"] == "Owner B"
+
+
 def test_core_business_dialogs_use_modern_base():
     app()
     project = Project(
@@ -325,6 +341,16 @@ def test_main_window_uses_application_icon(monkeypatch):
     window = window_for_workspace(monkeypatch, make_cross_project_workspace())
 
     assert not window.windowIcon().isNull()
+
+
+def test_task_detail_layout_has_stable_minimum_heights(monkeypatch):
+    window = window_for_workspace(monkeypatch, make_cross_project_workspace())
+
+    assert window.context_tabs.minimumHeight() >= 198
+    assert window.detail_title.minimumHeight() >= 24
+    assert window.detail_meta.minimumHeight() >= 22
+    assert window.detail_progress.height() >= 12
+    assert window.detail_note.minimumHeight() >= 46
 
 
 def test_packaging_scripts_embed_application_icon():

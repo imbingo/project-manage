@@ -73,7 +73,7 @@ from .storage import data_dir, load_workspace, save_workspace
 STATUS_LABELS = {"Open": "未开始", "Ongoing": "进行中", "Closed": "已关闭"}
 RISK_COLORS = {"H": "#dc2626", "M": "#d97706", "L": "#0f766e"}
 STATUS_COLORS = {"Open": "#64748b", "Ongoing": "#2563eb", "Closed": "#0f766e"}
-APP_USER_MODEL_ID = "imbingo.ProjectManageLocal.V34"
+APP_USER_MODEL_ID = "imbingo.ProjectManageLocal.V35"
 
 
 QSS = """
@@ -647,13 +647,21 @@ class TaskDialog(AppDialog):
 
 
 class DailyDialog(AppDialog):
-    def __init__(self, project: Project, log: DailyLog | None = None, selected_date: str = "", parent=None) -> None:
+    def __init__(
+        self,
+        project: Project,
+        log: DailyLog | None = None,
+        selected_date: str = "",
+        parent=None,
+        selected_task_id: str | None = None,
+    ) -> None:
         super().__init__(
             "编辑日报" if log else "新增日报",
             "记录当天计划、实际完成、进度和延期原因；延期时必须填写原因。",
             parent,
             QSize(620, 610),
         )
+        self.project = project
         self.task = QComboBox()
         for item in project.tasks:
             self.task.addItem(item.title, item.id)
@@ -676,6 +684,10 @@ class DailyDialog(AppDialog):
         if log:
             self.task.setCurrentIndex(max(0, self.task.findData(log.taskId)))
             self.result.setCurrentText(log.result)
+        elif selected_task_id:
+            self.task.setCurrentIndex(max(0, self.task.findData(selected_task_id)))
+        self._fill_responsible_from_selected_task(force=not bool(log and log.responsible))
+        self.task.currentIndexChanged.connect(lambda _index: self._fill_responsible_from_selected_task(force=False))
 
         form = self.form
         form.addRow("关联任务", self.task)
@@ -688,6 +700,14 @@ class DailyDialog(AppDialog):
         form.addRow("结果", self.result)
         form.addRow("延期原因", self.delay_reason)
         self.add_standard_buttons()
+
+    def _fill_responsible_from_selected_task(self, force: bool = False) -> None:
+        task_id = self.task.currentData()
+        task = next((item for item in self.project.tasks if item.id == task_id), None) if hasattr(self, "project") else None
+        if not task:
+            return
+        if force or not self.responsible.text().strip():
+            self.responsible.setText(task.responsible)
 
     def values(self) -> dict:
         return {
@@ -1263,7 +1283,7 @@ class MainWindow(QMainWindow):
         self.selected_task_id: str | None = None
         self.selected_log_id: str | None = None
         self.active_page_name = "任务计划"
-        self.setWindowTitle("Project_Manage_LocalV3.4")
+        self.setWindowTitle("Project_Manage_LocalV3.5")
         self.setWindowIcon(app_icon())
         self.resize(1680, 980)
         self.setMinimumSize(1280, 760)
@@ -1376,7 +1396,7 @@ class MainWindow(QMainWindow):
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(22, 14, 22, 14)
         title_box = QVBoxLayout()
-        eyebrow = QLabel("Project_Manage_LocalV3.4")
+        eyebrow = QLabel("Project_Manage_LocalV3.5")
         eyebrow.setStyleSheet("color:#2563eb;font-weight:900;font-size:12px;")
         self.title = QLabel()
         self.title.setStyleSheet("font-size:26px;font-weight:900;")
@@ -1610,8 +1630,8 @@ class MainWindow(QMainWindow):
 
     def _build_bottom_area(self) -> QWidget:
         self.context_tabs = QTabWidget()
-        self.context_tabs.setMinimumHeight(168)
-        self.context_tabs.setMaximumHeight(220)
+        self.context_tabs.setMinimumHeight(198)
+        self.context_tabs.setMaximumHeight(300)
 
         log_widget = QWidget()
         log_layout = QVBoxLayout(log_widget)
@@ -1677,14 +1697,18 @@ class MainWindow(QMainWindow):
 
     def _build_detail_panel(self) -> QFrame:
         frame = QFrame()
-        frame.setObjectName("panel")
+        frame.setObjectName("detailBox")
+        frame.setMinimumHeight(160)
         self._add_shadow(frame)
         box = QVBoxLayout(frame)
-        box.setContentsMargins(18, 16, 18, 16)
+        box.setContentsMargins(18, 12, 18, 12)
+        box.setSpacing(6)
         head = QHBoxLayout()
         title = QLabel("任务详情")
+        title.setMinimumHeight(24)
         title.setStyleSheet("font-size:17px;font-weight:900;")
         edit = QPushButton("编辑任务")
+        edit.setMinimumWidth(92)
         edit.clicked.connect(self.edit_task)
         head.addWidget(title)
         head.addStretch()
@@ -1692,22 +1716,28 @@ class MainWindow(QMainWindow):
         box.addLayout(head)
         self.detail_title = QLabel("未选择任务")
         self.detail_title.setWordWrap(True)
-        self.detail_title.setStyleSheet("font-size:15px;font-weight:900;")
+        self.detail_title.setMinimumHeight(24)
+        self.detail_title.setStyleSheet("font-size:15px;font-weight:900;line-height:1.25;")
         self.detail_meta = QLabel("请选择任务计划视图中的一行")
-        self.detail_meta.setStyleSheet("color:#64748b;")
+        self.detail_meta.setMinimumHeight(22)
+        self.detail_meta.setWordWrap(True)
+        self.detail_meta.setStyleSheet("color:#64748b;line-height:1.25;")
         self.detail_progress = QProgressBar()
         self.detail_progress.setRange(0, 100)
         self.detail_progress.setValue(0)
+        self.detail_progress.setFixedHeight(12)
         self.detail_gap = QLabel("")
+        self.detail_gap.setMinimumHeight(22)
         self.detail_gap.setStyleSheet("color:#dc2626;font-weight:900;")
         self.detail_note = QLabel("")
         self.detail_note.setWordWrap(True)
+        self.detail_note.setMinimumHeight(46)
         self.detail_note.setStyleSheet("background:#f8fafc;border:1px solid #eef2f7;border-radius:14px;padding:14px;color:#334155;")
         box.addWidget(self.detail_title)
         box.addWidget(self.detail_meta)
         box.addWidget(self.detail_progress)
         box.addWidget(self.detail_gap)
-        box.addWidget(self.detail_note, 1)
+        box.addWidget(self.detail_note)
         return frame
 
     def _add_shadow(self, widget: QWidget) -> None:
@@ -3801,7 +3831,7 @@ class MainWindow(QMainWindow):
         if not project.tasks:
             show_warning(self, "缺少任务", "请先新增任务，再填写日报。")
             return
-        dialog = DailyDialog(project, selected_date=self.workspace.selectedDate, parent=self)
+        dialog = DailyDialog(project, selected_date=self.workspace.selectedDate, parent=self, selected_task_id=self.selected_task_id)
         if dialog.exec() != QDialog.Accepted:
             return
         self._save_log_values(None, dialog.values())

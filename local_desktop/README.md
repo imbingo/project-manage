@@ -1,4 +1,11 @@
-# Project_Manage_LocalV3.4
+# Project_Manage_LocalV3.5
+
+## V3.5 更新重点
+
+- **日报默认关联当前任务**：从每日任务总览或甘特图选中任务后写日报，弹窗默认选中该任务。
+- **日报自动带出负责人**：新增日报时自动使用任务台账中的负责人，减少重复输入。
+- **任务详情布局修复**：底部任务详情区域提高可用高度，标题、元信息、进度和备注不再互相挤压。
+- **数据版本标记更新**：保存的 workspace 版本标记改为 `Project_Manage_LocalV3.5`。
 
 ## V3.4 更新重点
 
@@ -89,7 +96,7 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.4/Project_Manage_LocalV3.4.exe
+local_desktop/dist/Project_Manage_LocalV3.5/Project_Manage_LocalV3.5.exe
 ```
 
 ## 生成 Setup 安装程序
@@ -102,13 +109,13 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.4_Setup.exe
+local_desktop/dist/Project_Manage_LocalV3.5_Setup.exe
 ```
 
 安装程序会把主程序安装到：
 
 ```text
-%LOCALAPPDATA%/Programs/Project_Manage_LocalV3.4
+%LOCALAPPDATA%/Programs/Project_Manage_LocalV3.5
 ```
 
 ## 与网页版差异
