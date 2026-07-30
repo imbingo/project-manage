@@ -1,4 +1,9 @@
-# Project_Manage_LocalV3.6
+# Project_Manage_LocalV3.6.1
+
+## V3.6.1 更新重点
+
+- **Setup 安装修复**：修复 V3.6 IExpress 安装包无法自动执行内部安装脚本的问题。
+- **版本标记更新**：保存的 workspace 版本标记改为 `Project_Manage_LocalV3.6.1`。
 
 ## V3.6 更新重点
 
@@ -103,7 +108,7 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.6/Project_Manage_LocalV3.6.exe
+local_desktop/dist/Project_Manage_LocalV3.6.1/Project_Manage_LocalV3.6.1.exe
 ```
 
 ## 生成 Setup 安装程序
@@ -116,13 +121,13 @@ cd local_desktop
 输出：
 
 ```text
-local_desktop/dist/Project_Manage_LocalV3.6_Setup.exe
+local_desktop/dist/Project_Manage_LocalV3.6.1_Setup.exe
 ```
 
 安装程序会把主程序安装到：
 
 ```text
-%LOCALAPPDATA%/Programs/Project_Manage_LocalV3.6
+%LOCALAPPDATA%/Programs/Project_Manage_LocalV3.6.1
 ```
 
 ## 与网页版差异

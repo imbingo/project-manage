@@ -81,7 +81,7 @@ from .storage import data_dir, load_workspace, save_workspace
 STATUS_LABELS = {"Open": "未开始", "Ongoing": "进行中", "Closed": "已关闭"}
 RISK_COLORS = {"H": "#dc2626", "M": "#d97706", "L": "#0f766e"}
 STATUS_COLORS = {"Open": "#64748b", "Ongoing": "#2563eb", "Closed": "#0f766e"}
-APP_USER_MODEL_ID = "imbingo.ProjectManageLocal.V36"
+APP_USER_MODEL_ID = "imbingo.ProjectManageLocal.V361"
 
 
 QSS = """
@@ -1291,7 +1291,7 @@ class MainWindow(QMainWindow):
         self.selected_task_id: str | None = None
         self.selected_log_id: str | None = None
         self.active_page_name = "任务计划"
-        self.setWindowTitle("Project_Manage_LocalV3.6")
+        self.setWindowTitle("Project_Manage_LocalV3.6.1")
         self.setWindowIcon(app_icon())
         self.resize(1680, 980)
         self.setMinimumSize(1280, 760)
@@ -1404,7 +1404,7 @@ class MainWindow(QMainWindow):
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(22, 14, 22, 14)
         title_box = QVBoxLayout()
-        eyebrow = QLabel("Project_Manage_LocalV3.6")
+        eyebrow = QLabel("Project_Manage_LocalV3.6.1")
         eyebrow.setStyleSheet("color:#2563eb;font-weight:900;font-size:12px;")
         self.title = QLabel()
         self.title.setStyleSheet("font-size:26px;font-weight:900;")

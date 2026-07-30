@@ -195,8 +195,8 @@ def test_storage_writes_current_app_version(tmp_path, monkeypatch):
     assert load_workspace().version == APP_VERSION
 
 
-def test_app_version_is_v3_6():
-    assert APP_VERSION == "Project_Manage_LocalV3.6"
+def test_app_version_is_v3_6_1():
+    assert APP_VERSION == "Project_Manage_LocalV3.6.1"
 
 
 def test_application_icon_is_available():
